@@ -1,0 +1,70 @@
+# Cloud training run on a GitHub-hosted runner (public repos: 4 cores, private: 2; max 6 h per job).
+# Start it from the Actions tab ("Train bots" -> Run workflow). Results are committed to a
+# branch training/<run number> and uploaded as an artifact.
+name: Train bots
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Training hours (max 5.5)"
+        default: "5"
+      games:
+        description: "Bots to train"
+        default: "snk 8noisy 8std"
+      budget:
+        description: "Bot simulations per shot"
+        default: "250"
+      skill:
+        description: "Human-error multiplier of the self-play profile (1 = Club player)"
+        default: "1.0"
+permissions:
+  contents: write
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y g++ clang lld make python3
+          mkdir -p build/npm && cd build/npm && npm init -y > /dev/null && npm install three@0.128.0 binaryen@116.0.0
+      - name: Restore self-play data
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: selfplay-data-${{ github.run_id }}
+          restore-keys: selfplay-data-
+      - name: Smoke test
+        run: make tools && make tests
+      - name: Train
+        env:
+          HOURS: ${{ github.event.inputs.hours }}
+          GAMES: ${{ github.event.inputs.games }}
+          BUDGET: ${{ github.event.inputs.budget }}
+          SKILL: ${{ github.event.inputs.skill }}
+          RUN: runs/gh_${{ github.run_number }}
+          BEST_FROM: train/baseline
+        run: ./train/run_pipeline.sh
+      - name: Save self-play data
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: selfplay-data-${{ github.run_id }}
+      - name: Upload run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ github.run_number }}
+          path: runs/
+      - name: Commit results to a branch
+        run: |
+          cp runs/gh_${{ github.run_number }}/best/* train/baseline/
+          git config user.name "training-bot"
+          git config user.email "training-bot@users.noreply.github.com"
+          git checkout -b training/${{ github.run_number }}
+          git add -f train/baseline train/out web/index.html runs/gh_${{ github.run_number }}/REPORT.md runs/gh_${{ github.run_number }}/progress.jsonl
+          git commit -m "Training run ${{ github.run_number }}: $(grep -c accepted\":1 runs/gh_${{ github.run_number }}/progress.jsonl || true) candidates accepted"
+          git push origin training/${{ github.run_number }}

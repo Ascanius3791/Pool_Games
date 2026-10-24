@@ -46,6 +46,15 @@ Each iteration does the following:
 
 At the end, the best evaluators are exported to `train/out/*.h` (`train/export.py`). The page is rebuilt (`./build.sh`) if the npm dependencies are present.
 
+## Where to run it
+
+**GitHub Actions (recommended).** Push the repo to GitHub, open *Actions → Train bots → Run workflow* and choose the hours (5.5 max, because a job is limited to 6 h). The runner has 4 cores for a public repo and 2 for a private one.
+* Self-play data is kept between runs in the Actions cache, so every run builds on the previous ones.
+* The accepted evaluators, the report and the rebuilt page are committed to a branch `training/<n>`. Merge it, and the next run starts from those evaluators (they are copied into `train/baseline/`).
+* The full run directory is attached as a workflow artifact.
+
+**Any Linux machine** with g++/clang/lld/python3/node works as well, using the commands below. A Claude cloud sandbox is not a good fit: its programs stop shortly after a reply ends, so a run would have to be chopped into 10-minute steps.
+
 ## Running it
 
 ```bash
