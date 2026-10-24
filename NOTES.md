@@ -54,6 +54,12 @@
   - Snooker win-table evaluator (SnkEval) in bot.h. The game uses it only once the arena accepts it (SNK_USE_TABLE in train/out/snk_eval.h).
   - Smoke test (make smoke, about 3 min) passes end to end.
 
+- Local run runs/local1 (2026-10-24, 15 min on 2 cores, budget 200, GAMES="snk 8noisy"): 55 snooker frames (3217 positions), 283 noisy 8-ball games (4004 positions).
+  - Tuning: 8noisy val target loss 0.652 -> 0.623. Snooker params moved to (-0.55, 0.40, -0.01, -4.81, -2.05, eScale 2.04), val loss 0.390 -> 0.389.
+  - Calibration: pPotRed 0.55, pPotCol 0.51, pOpen 0.51, pFoulSafety 0.16.
+  - Arena: 8noisy 63-67 (-11 +- 60 Elo); snooker win table vs legacy 14-11 (+42 +- 146).
+  - Nothing accepted, so the game is unchanged. The data is delivered as selfplay-data-local1.tar.gz.
+
 ## Strategy gaps and training plan (discussed 2026-10-24)
 - The bot looks one shot ahead plus a static evaluation, so it has no multi-visit planning.
 - The snooker value is linear in points (points this shot ± expected next visit). It ignores score context, so it does not play for snookers when it needs them and does not tighten up when far ahead. The 'snookered' term is a flat -3.
