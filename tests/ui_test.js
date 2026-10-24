@@ -1,0 +1,38 @@
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const browser = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'] });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
+  const errs = [];
+  page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.type() + ': ' + m.text()); });
+  page.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
+  await page.route('https://cdnjs.cloudflare.com/**', r => r.fulfill({ path: '/home/claude/pool/build/npm/node_modules/three/build/three.min.js', contentType: 'application/javascript' }));
+  await page.route('https://fonts.googleapis.com/**', r => r.abort());
+  await page.goto('file:///home/claude/pool/build/harness.html');
+  await page.waitForTimeout(2500);
+  const out = '/home/claude/pool/build/shots/';
+  await page.screenshot({ path: out + '1_menu.png' });
+  await page.click('#mTwo');
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: out + '2_cue.png' });
+  await page.keyboard.press('c'); await page.waitForTimeout(1200);
+  await page.screenshot({ path: out + '3_orbit.png' });
+  await page.keyboard.press('c'); await page.waitForTimeout(1200);
+  await page.screenshot({ path: out + '4_top.png' });
+  // break via power bar drag
+  const bar = await page.locator('#power').boundingBox();
+  await page.mouse.move(bar.x + bar.width / 2, bar.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height * 0.9, { steps: 8 });
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: out + '5_pull.png' });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: out + '6_break.png' });
+  await page.waitForTimeout(25000);
+  await page.screenshot({ path: out + '7_after.png' });
+  const msg = await page.textContent('#msg');
+  console.log('MSG:', msg);
+  console.log(errs.slice(0, 20).join('\n'));
+  await browser.close();
+})();

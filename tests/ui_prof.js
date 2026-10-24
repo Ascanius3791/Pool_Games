@@ -1,0 +1,34 @@
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'] });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
+  const errs = [];
+  page.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+  await page.route('https://cdnjs.cloudflare.com/**', r => r.fulfill({ path: '/home/claude/pool/build/npm/node_modules/three/build/three.min.js', contentType: 'application/javascript' }));
+  await page.route('https://fonts.googleapis.com/**', r => r.abort());
+  await page.goto('file:///home/claude/pool/build/harness.html');
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => { document.getElementById('optNoise').checked = true; document.getElementById('optProfileEdit').click(); });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => document.getElementById('peDup').click());
+  await page.fill('#peRows .peRow:nth-child(1) input[data-f="hi"]', '14');
+  await page.fill('#peRows .peRow:nth-child(1) input[data-f="mu"]', '1.5');
+  await page.fill('#peMissP', '5');
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: '/home/claude/pool/build/shots/p_editor.png' });
+  await page.evaluate(() => document.getElementById('peUse').click());
+  console.log('menu text:', await page.textContent('#optSkillInfo'));
+  await page.evaluate(() => document.getElementById('mBot').click());
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { setCam('2d'); S.power = 0.9; updatePowerUI(); drawSpin(); });
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: '/home/claude/pool/build/shots/p_2d.png' });
+  // engine got the profile?
+  console.log('sigmas@0.9:', await page.evaluate(() => { E.noiseSigmas(1); return Array.from(OUT.slice(0, 9)).map(v => +v.toFixed(5)); }));
+  await page.evaluate(() => { openMenu(); document.getElementById('gSnk').click(); document.getElementById('mWatch').click(); });
+  await page.evaluate(() => setCam('2d')); await page.waitForTimeout(2500);
+  await page.screenshot({ path: '/home/claude/pool/build/shots/p_2d_snk.png' });
+  console.log(errs.join('\n'));
+  await browser.close();
+})();

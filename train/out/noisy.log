@@ -1,0 +1,44 @@
+[noisy] selfplay games=5 decided=5 samples=72 avgTurns=15.4 t=19s
+[noisy] selfplay games=10 decided=10 samples=161 avgTurns=17.1 t=41s
+[noisy] selfplay games=15 decided=15 samples=226 avgTurns=16.1 t=61s
+[noisy] selfplay games=20 decided=20 samples=296 avgTurns=15.8 t=83s
+[noisy] selfplay games=25 decided=25 samples=403 avgTurns=17.1 t=111s
+[noisy] selfplay games=30 decided=30 samples=490 avgTurns=17.3 t=133s
+[noisy] selfplay games=35 decided=35 samples=571 avgTurns=17.3 t=156s
+[noisy] selfplay games=40 decided=40 samples=667 avgTurns=17.7 t=185s
+[noisy] selfplay games=45 decided=45 samples=743 avgTurns=17.5 t=236s
+[noisy] selfplay games=50 decided=50 samples=812 avgTurns=17.2 t=276s
+[noisy] selfplay games=55 decided=55 samples=899 avgTurns=17.3 t=325s
+[noisy] selfplay done: 56 games, 910 samples
+[noisy] epoch 0 train loss 0.6744 val loss 0.6753 val acc 0.603
+[noisy] epoch 50 train loss 0.6224 val loss 0.6329 val acc 0.632
+[noisy] epoch 100 train loss 0.6101 val loss 0.6301 val acc 0.625
+[noisy] epoch 150 train loss 0.6002 val loss 0.6372 val acc 0.625
+[noisy] epoch 200 train loss 0.5926 val loss 0.6304 val acc 0.632
+[noisy] epoch 250 train loss 0.5828 val loss 0.6468 val acc 0.632
+[noisy] epoch 299 train loss 0.5733 val loss 0.6462 val acc 0.647
+[noisy] validation: NN logloss 0.6142 acc 0.676 | heuristic logloss 0.7468 acc 0.603 (n=136)
+[noisy] eval game 1: NN 0 - 1 heuristic
+[noisy] eval game 2: NN 1 - 1 heuristic
+[noisy] eval game 3: NN 2 - 1 heuristic
+[noisy] eval game 4: NN 2 - 2 heuristic
+[noisy] eval game 5: NN 3 - 2 heuristic
+[noisy] eval game 6: NN 4 - 2 heuristic
+[noisy] eval game 7: NN 5 - 2 heuristic
+[noisy] eval game 8: NN 5 - 3 heuristic
+[noisy] eval game 9: NN 5 - 4 heuristic
+[noisy] eval game 10: NN 5 - 5 heuristic
+[noisy] eval game 11: NN 6 - 5 heuristic
+[noisy] eval game 12: NN 7 - 5 heuristic
+[noisy] eval game 13: NN 7 - 6 heuristic
+[noisy] eval game 14: NN 7 - 7 heuristic
+[noisy] eval game 15: NN 8 - 7 heuristic
+[noisy] eval game 16: NN 9 - 7 heuristic
+[noisy] eval game 17: NN 9 - 8 heuristic
+[noisy] eval game 18: NN 10 - 8 heuristic
+[noisy] eval game 19: NN 11 - 8 heuristic
+[noisy] eval game 20: NN 12 - 8 heuristic
+[noisy] eval game 21: NN 12 - 9 heuristic
+[noisy] eval game 22: NN 12 - 10 heuristic
+[noisy] eval game 23: NN 13 - 10 heuristic
+[noisy] FINAL eval: NN 13 - 10 heuristic in 23 games; total time 515s

@@ -1,0 +1,7 @@
+build/
+train/bin/
+data/
+runs/smoke/
+runs/*/iter_*/selfplay_*.log
+*.o
+node_modules/

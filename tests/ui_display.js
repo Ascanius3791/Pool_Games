@@ -1,0 +1,25 @@
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'] });
+  const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+  const errs = [];
+  page.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
+  await page.route('https://cdnjs.cloudflare.com/**', r => r.fulfill({ path: '/home/claude/pool/build/npm/node_modules/three/build/three.min.js', contentType: 'application/javascript' }));
+  await page.route('https://fonts.googleapis.com/**', r => r.abort());
+  await page.goto('file:///home/claude/pool/build/harness.html');
+  await page.waitForTimeout(2000);
+  await page.check('#optNoise');
+  await page.screenshot({ path: '/home/claude/pool/build/shots/d_menu.png' });
+  await page.click('#mBot');
+  await page.waitForTimeout(800);
+  await page.click('#bDisplay');
+  await page.uncheck('#displayPanel input[data-el="spin"]');
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: '/home/claude/pool/build/shots/d_panel.png' });
+  console.log('spin hidden:', await page.evaluate(() => getComputedStyle(document.getElementById('spinWrap')).display));
+  await page.keyboard.press('u'); await page.waitForTimeout(600);
+  await page.screenshot({ path: '/home/claude/pool/build/shots/d_all.png' });
+  console.log('all hidden: score', await page.evaluate(() => getComputedStyle(document.getElementById('score')).display));
+  console.log(errs.join('\n'));
+  await browser.close();
+})();

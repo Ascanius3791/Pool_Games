@@ -1,0 +1,1828 @@
+<title>Felt &amp; Chalk 8-Ball</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Limelight&family=Barlow+Semi+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed 3D table; HUD floats at the edges like brass fittings on a billiard-hall wall */
+:root {
+  --bg: #0c1110;          /* hall darkness */
+  --panel: rgba(16, 22, 20, 0.82);
+  --panel-line: rgba(201, 164, 92, 0.28);
+  --ivory: #ece6d6;       /* ball ivory / text */
+  --muted: #9aa49c;
+  --brass: #c9a45c;       /* fittings */
+  --chalk: #5d9bd6;       /* cue-chalk blue: the accent */
+  --danger: #e0644f;
+  --good: #7cc48a;
+  --display: "Limelight", "Rockwell", Georgia, serif;
+  --ui: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ivory); font-family: var(--ui); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+.hud { position: fixed; pointer-events: none; z-index: 5; }
+.hud > * { pointer-events: auto; }
+button { font-family: var(--ui); color: var(--ivory); background: var(--panel); border: 1px solid var(--panel-line); border-radius: 6px; padding: 7px 12px; font-size: 14px; font-weight: 600; letter-spacing: 0.04em; cursor: pointer; }
+button:hover { border-color: var(--brass); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--chalk); outline-offset: 2px; }
+button[aria-pressed="true"] { border-color: var(--chalk); color: #fff; box-shadow: inset 0 0 0 1px var(--chalk); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* top scoreboard */
+#score { top: calc(env(safe-area-inset-top, 0px) + 12px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: calc(100vw - 32px); }
+#board { display: flex; align-items: stretch; background: var(--panel); border: 1px solid var(--panel-line); border-radius: 10px; overflow: hidden; backdrop-filter: blur(6px); }
+.player { display: flex; flex-direction: column; gap: 5px; padding: 8px 14px; min-width: 0; opacity: 0.55; transition: opacity .25s; }
+.player.active { opacity: 1; background: linear-gradient(180deg, rgba(93,155,214,0.16), transparent); }
+.player .name { font-family: var(--display); font-size: 17px; letter-spacing: 0.03em; white-space: nowrap; display: flex; gap: 8px; align-items: center; }
+.player .name .dot { width: 8px; height: 8px; border-radius: 50%; background: transparent; border: 1px solid var(--muted); }
+.player.active .name .dot { background: var(--chalk); border-color: var(--chalk); box-shadow: 0 0 8px var(--chalk); }
+.player .grp { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.chips { display: flex; gap: 3px; flex-wrap: wrap; min-height: 18px; }
+.chip { width: 17px; height: 17px; border-radius: 50%; font: 600 9px/17px var(--ui); text-align: center; color: #111; position: relative; box-shadow: inset -2px -2px 3px rgba(0,0,0,.35); }
+.chip span { position: absolute; inset: 4px; border-radius: 50%; background: #f4efe2; line-height: 9px; font-size: 7px; }
+.chip.gone { opacity: 0.18; }
+.vs { width: 1px; background: var(--panel-line); }
+.pts { font-family: var(--mono); font-size: 20px; color: var(--ivory); margin-left: auto; padding-left: 14px; font-variant-numeric: tabular-nums; }
+#onLine { font-size: 12px; color: var(--muted); letter-spacing: 0.04em; display: flex; gap: 8px; align-items: center; }
+#onLine .ball { width: 12px; height: 12px; border-radius: 50%; display: inline-block; box-shadow: inset -2px -2px 3px rgba(0,0,0,.35); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.seg button { padding: 9px 10px; font-size: 15px; }
+#choicePanel { left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 64px); transform: translateX(-50%); width: min(520px, calc(100vw - 32px)); box-sizing: border-box; background: rgba(14, 19, 17, 0.97); border: 1px solid var(--brass); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; z-index: 9; }
+.chRef { font-size: 14px; line-height: 1.45; color: var(--ivory); }
+.chRef small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.chBtns { display: flex; flex-direction: column; gap: 6px; }
+.chBtns button { text-align: left; display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 15px; }
+.chBtns button small { font: 12px var(--mono); color: var(--muted); font-weight: 400; white-space: nowrap; }
+.chBtns button.rec { border-color: var(--chalk); }
+.opt label.sub { padding-left: 28px; font-size: 14px; }
+.chBtns .ball { width: 14px; height: 14px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: -2px; box-shadow: inset -2px -2px 3px rgba(0,0,0,.35); }
+#displayPanel { top: calc(env(safe-area-inset-top, 0px) + 12px); left: calc(max(12px, env(safe-area-inset-left, 0px)) + 150px); background: rgba(14, 19, 17, 0.96); border: 1px solid var(--panel-line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; width: 250px; box-sizing: border-box; z-index: 8; }
+#displayPanel label { display: flex; gap: 9px; align-items: center; font-size: 14px; cursor: pointer; }
+#displayPanel input { width: 16px; height: 16px; accent-color: var(--chalk); }
+.dpTitle { font-size: 11px; letter-spacing: 0.16em; color: var(--muted); text-transform: uppercase; }
+.dpNote { font-size: 12px; color: var(--muted); line-height: 1.4; }
+body.hide-score #score, body.hide-spin #spinWrap, body.hide-power #powerWrap, body.hide-spread #sigma,
+body.hide-report #report, body.hide-hint #hint, body.hide-all .hud:not(#tools):not(#displayPanel):not(#choicePanel) { display: none !important; }
+body.hide-all #tools > *:not(#bDisplay) { display: none !important; }
+#effortBox { background: var(--panel); border: 1px solid var(--panel-line); border-radius: 6px; padding: 7px 10px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); width: 136px; box-sizing: border-box; }
+#effortBox input { width: 100%; accent-color: var(--chalk); }
+#effortBox label b { color: var(--ivory); font-weight: 600; }
+#effortBox b, .opt .val.wide { font-family: var(--mono); color: var(--ivory); font-weight: 400; }
+#msg { font-size: 15px; padding: 6px 14px; border-radius: 6px; background: var(--panel); border: 1px solid var(--panel-line); text-align: center; max-width: 560px; }
+#msg.foul { border-color: var(--danger); color: #ffd5cc; }
+#msg.win { border-color: var(--brass); color: #ffe7b0; font-family: var(--display); font-size: 18px; }
+
+/* top-left tools */
+#tools { top: calc(env(safe-area-inset-top, 0px) + 12px); left: max(12px, env(safe-area-inset-left, 0px)); display: flex; flex-direction: column; gap: 6px; }
+#tools button { min-width: 112px; text-align: left; }
+#tools .k { font-family: var(--mono); font-size: 11px; color: var(--muted); float: right; margin-left: 10px; }
+
+/* power bar (right) */
+#powerWrap { right: max(14px, env(safe-area-inset-right, 0px)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+#powerLabel { font-size: 11px; letter-spacing: 0.18em; color: var(--muted); }
+#power { width: 44px; height: min(46vh, 340px); border-radius: 22px; background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)); border: 1px solid var(--panel-line); position: relative; cursor: ns-resize; touch-action: none; overflow: hidden; }
+#powerFill { position: absolute; left: 0; right: 0; top: 0; height: 0%; background: linear-gradient(180deg, #3d6f9e 0%, var(--chalk) 55%, #e2b35c 85%, var(--danger) 100%); opacity: 0.9; }
+#powerTicks { position: absolute; inset: 0; background: repeating-linear-gradient(180deg, transparent 0 calc(10% - 1px), rgba(255,255,255,0.12) calc(10% - 1px) 10%); pointer-events: none; }
+#powerMark { position: absolute; left: -2px; right: -2px; height: 2px; background: var(--ivory); top: 35%; opacity: 0.6; pointer-events: none; }
+#speed { font-family: var(--mono); font-size: 13px; color: var(--ivory); text-align: center; line-height: 1.25; }
+#speed small { display: block; color: var(--muted); font-size: 10px; }
+#sigma { font-family: var(--mono); font-size: 10px; color: var(--chalk); text-align: right; line-height: 1.45; background: var(--panel); border: 1px solid var(--panel-line); border-radius: 6px; padding: 6px 8px; }
+
+/* spin widget (bottom-left) */
+#spinWrap { left: max(14px, env(safe-area-inset-left, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--panel-line); border-radius: 12px; padding: 10px 12px 8px; }
+#spin { width: 116px; height: 116px; cursor: crosshair; touch-action: none; }
+#spinTxt { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 15ch; text-align: center; white-space: pre; font-variant-numeric: tabular-nums; }
+#spinWrap { width: 148px; box-sizing: border-box; }
+#spinWrap .lbl { font-size: 11px; letter-spacing: 0.18em; color: var(--muted); }
+
+/* hint + shot report */
+#hint { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); left: 50%; transform: translateX(-50%); font-size: 13px; color: var(--muted); background: var(--panel); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--panel-line); white-space: nowrap; max-width: calc(100vw - 340px); overflow: hidden; text-overflow: ellipsis; }
+#report { right: max(14px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); font-family: var(--mono); font-size: 11px; line-height: 1.5; background: var(--panel); border: 1px solid var(--panel-line); border-radius: 8px; padding: 8px 10px; min-width: 190px; }
+#report b { font-family: var(--ui); font-size: 11px; letter-spacing: 0.14em; color: var(--muted); font-weight: 600; display: block; margin-bottom: 2px; }
+
+/* overlays */
+.overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: radial-gradient(ellipse at center, rgba(6,10,9,0.55), rgba(6,10,9,0.86)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.card { max-height: calc(100vh - 32px); overflow-y: auto; box-sizing: border-box; background: rgba(14, 19, 17, 0.95); border: 1px solid var(--panel-line); border-radius: 14px; padding: 26px 28px 22px; width: min(460px, 100%); display: flex; flex-direction: column; gap: 16px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+.card h1 { font-family: var(--display); font-weight: 400; font-size: 38px; margin: 0; line-height: 1; color: var(--ivory); text-wrap: balance; }
+.card h1 em { font-style: normal; color: var(--brass); }
+.card p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.modes button { padding: 12px 10px; font-size: 15px; text-align: left; display: flex; flex-direction: column; gap: 2px; }
+.modes button small { font-weight: 400; color: var(--muted); font-size: 12px; letter-spacing: 0; }
+.opt { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--panel-line); padding-top: 14px; }
+.opt label { display: flex; align-items: center; gap: 10px; font-size: 15px; cursor: pointer; }
+.opt input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--chalk); }
+.opt .row { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.opt input[type=range] { flex: 1; accent-color: var(--chalk); }
+.opt .val { font-family: var(--mono); color: var(--ivory); min-width: 34px; text-align: right; }
+.opt .note { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.profRow { display: flex; gap: 8px; }
+.profRow select, .peTop select { flex: 1; min-width: 0; font: 600 14px var(--ui); color: var(--ivory); background: rgba(255,255,255,0.05); border: 1px solid var(--panel-line); border-radius: 6px; padding: 7px 8px; }
+.profRow select option, .peTop select option { background: #121815; }
+.card.wide { width: min(820px, 100%); }
+.peExplain { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }
+.peExplain b { color: var(--ivory); }
+.peFormula { font-size: 13px !important; }
+.peTop { display: flex; gap: 6px; flex-wrap: wrap; }
+.peName { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--muted); }
+.peName input, .peRow input[type=number], .peMiss input { font: 14px var(--mono); color: var(--ivory); background: rgba(255,255,255,0.05); border: 1px solid var(--panel-line); border-radius: 5px; padding: 5px 6px; }
+.peName input { flex: 1; }
+.peHead, .peRow { display: grid; grid-template-columns: 120px 76px 76px 110px 84px 1fr; gap: 8px; align-items: center; }
+.peHead span { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.peRow { padding: 6px 0; border-top: 1px solid var(--panel-line); }
+.peRow .lab { font-size: 14px; line-height: 1.2; }
+.peRow .lab small { display: block; color: var(--muted); font-size: 11px; }
+.peRow input[type=number] { width: 100%; box-sizing: border-box; }
+.peRow .curve { display: flex; flex-direction: column; font: 11px var(--mono); color: var(--muted); }
+.peRow .curve input { width: 100%; accent-color: var(--chalk); }
+.peRow canvas { width: 100%; height: 54px; }
+.peRow input:disabled, .peMiss input:disabled, .peName input:disabled { opacity: 0.55; }
+.peMiss { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 14px; border-top: 1px solid var(--panel-line); padding-top: 10px; }
+.peMiss input { width: 70px; }
+.peBtns { display: flex; gap: 8px; justify-content: flex-end; }
+@media (max-width: 720px) {
+  .peHead { display: none; }
+  .peRow { grid-template-columns: 1fr 1fr; }
+  .peRow .lab, .peRow canvas { grid-column: 1 / -1; }
+}
+body.cam2d #powerWrap { top: calc(env(safe-area-inset-top, 0px) + 12px); transform: none; }
+body.cam2d #power { height: min(30vh, 240px); }
+.sl { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; }
+.slHead { display: flex; justify-content: space-between; font-size: 14px; }
+.slHead b { color: var(--ivory); font-weight: 600; }
+.sl input[type=range] { width: 100%; accent-color: var(--chalk); }
+.slEnds { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; }
+.keys kbd { font-family: var(--mono); font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid var(--panel-line); border-radius: 4px; padding: 1px 6px; color: var(--ivory); white-space: nowrap; justify-self: start; }
+.keys span { color: var(--muted); }
+#loading { position: fixed; inset: 0; display: grid; place-items: center; font-family: var(--display); font-size: 24px; color: var(--brass); z-index: 30; background: var(--bg); }
+
+@media (max-width: 720px) {
+  #spinWrap { width: 118px; }
+  #spinTxt { font-size: 9px; }
+  #tools button { min-width: 0; padding: 6px 9px; font-size: 12px; }
+  #tools .k { display: none; }
+  #effortBox { width: 100px; }
+  #displayPanel { left: max(12px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 230px); }
+  #hint { display: none; }
+  #spin { width: 88px; height: 88px; }
+  .player { padding: 6px 9px; }
+  .player .name { font-size: 14px; }
+  .chip { width: 13px; height: 13px; font-size: 7px; line-height: 13px; }
+  .chip span { inset: 3px; }
+  #report { display: none; }
+  #power { height: 36vh; width: 38px; }
+  #score { top: calc(env(safe-area-inset-top, 0px) + 8px); }
+  #msg { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) { .player { transition: none; } }
+</style>
+
+<div id="stage"></div>
+<div id="loading">Racking the balls…</div>
+
+<div id="score" class="hud">
+  <div id="board">
+    <div class="player" id="p0"><div class="name"><i class="dot"></i><span class="pname">Player 1</span><span class="pts" hidden></span></div><div class="grp">Open table</div><div class="chips"></div></div>
+    <div class="vs"></div>
+    <div class="player" id="p1"><div class="name"><i class="dot"></i><span class="pname">Player 2</span><span class="pts" hidden></span></div><div class="grp">Open table</div><div class="chips"></div></div>
+  </div>
+  <div id="msg">Break the rack.</div>
+  <div id="onLine" hidden></div>
+</div>
+
+<div id="tools" class="hud">
+  <button id="bMenu">New game<span class="k">N</span></button>
+  <button id="bCam">View: Cue<span class="k">C</span></button>
+  <button id="bGuide" aria-pressed="true">Guide<span class="k">G</span></button>
+  <button id="bSound" aria-pressed="true">Sound<span class="k">M</span></button>
+  <button id="bHelp">Controls<span class="k">H</span></button>
+  <button id="bRerack" hidden>Re-rack</button>
+  <button id="bHand" hidden>Ball in hand</button>
+  <div id="effortBox" hidden><label for="effort">Bot thinking: <b id="effortTag">Normal</b></label><input type="range" id="effort" min="0" max="1" step="0.01"><span id="effortV">tries 400 shots</span></div>
+  <button id="bDisplay" aria-expanded="false">Display<span class="k">U</span></button>
+</div>
+
+<div id="powerWrap" class="hud">
+  <div id="powerLabel">POWER</div>
+  <div id="power" role="slider" aria-label="Shot power: drag down to pull the cue back, release to shoot" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+    <div id="powerFill"></div><div id="powerTicks"></div><div id="powerMark"></div>
+  </div>
+  <div id="speed">0.0<small>m/s</small></div>
+  <div id="sigma" hidden></div>
+</div>
+
+<div id="spinWrap" class="hud">
+  <div class="lbl">TIP POSITION</div>
+  <canvas id="spin" width="232" height="232" aria-label="Cue tip position on the cue ball: click or drag to set spin"></canvas>
+  <div id="spinTxt">↔ +0.00   ↕ +0.00</div>
+</div>
+
+<div id="choicePanel" class="hud" hidden>
+  <div class="dpTitle" id="chTitle">Foul</div>
+  <div id="chRef" class="chRef"></div>
+  <div id="chBtns" class="chBtns"></div>
+</div>
+
+<div id="displayPanel" class="hud" hidden>
+  <div class="dpTitle">Show on screen</div>
+  <label><input type="checkbox" data-el="score" checked> Scoreboard and messages</label>
+  <label><input type="checkbox" data-el="spin" checked> Tip position (spin)</label>
+  <label><input type="checkbox" data-el="power" checked> Power bar</label>
+  <label><input type="checkbox" data-el="spread" checked> Shot spread (human error)</label>
+  <label><input type="checkbox" data-el="report" checked> Bot reasoning and last stroke</label>
+  <label><input type="checkbox" data-el="hint" checked> Control hints</label>
+  <div class="dpNote">Hidden panels keep working: W A S D still set spin, Space still shoots. Press U to hide or show everything at once.</div>
+</div>
+
+<div id="hint" class="hud">Drag to aim · drag the power bar down and release to shoot</div>
+<div id="report" class="hud" hidden></div>
+
+<div id="menu" class="overlay">
+  <div class="card">
+    <h1>Felt <em>&amp;</em> Chalk</h1>
+    <p>8-ball on a 9-foot table or snooker on a 12-foot table. Sliding and rolling friction, side spin and draw, throw, cushion grip and squirt are all simulated.</p>
+    <div class="seg" role="group" aria-label="Game"><button id="gPool" aria-pressed="true">8-ball</button><button id="gSnk" aria-pressed="false">Snooker</button></div>
+    <div class="modes">
+      <button id="mTwo">Two players<small>Hot-seat, WPA-style rules</small></button>
+      <button id="mPractice">Practice<small>Free table, drag balls in top view</small></button>
+      <button id="mBot">Versus bot<small>You break, the bot plays Player 2</small></button>
+      <button id="mWatch">Watch bots<small>Bot A against Bot B</small></button>
+    </div>
+    <button id="mResume" hidden>Back to the current game</button>
+    <div class="opt">
+      <label><input type="checkbox" id="optNoise"> Human error</label>
+      <div class="note">Off: every shot goes exactly where you aim, with exactly the strength and spin you set. The bot is then close to flawless.<br>On: like a real player, your cue arm is never perfectly steady. Each shot drifts a little off your aim, comes out a little too hard or too soft, and the tip lands slightly off the spot you chose. The harder you hit, the bigger these slips get, so a smooth, medium-paced shot is the safe one and a slam is a gamble. The bot plays with exactly the same unsteady arm.</div>
+      <div class="sl">
+        <div class="slHead"><label for="optProfile">Player profile</label></div>
+        <div class="profRow"><select id="optProfile"></select><button id="optProfileEdit">Edit profiles…</button></div>
+        <div class="note" id="optSkillInfo"></div>
+      </div>
+      <div class="sl">
+        <div class="slHead"><span>Bot thinking</span><b id="optEffortTag">Normal</b></div>
+        <input type="range" id="optEffort" min="0" max="1" step="0.01" aria-describedby="optEffortInfo">
+        <div class="slEnds"><span>Quick</span><span>Deep</span></div>
+        <div class="note" id="optEffortInfo"></div>
+      </div>
+    </div>
+    <div class="opt" id="snkRules" hidden>
+      <div class="slHead"><span>Snooker referee</span></div>
+      <div class="profRow"><select id="optMissMode" aria-label="Miss rule">
+        <option value="0">Miss judged by player profile</option>
+        <option value="1">Pro rules: every failure to hit is a miss</option>
+      </select></div>
+      <div class="sl" id="tauBox">
+        <div class="slHead"><span>Expected to hit</span><b id="optTauV">50%</b></div>
+        <input type="range" id="optTau" min="0.3" max="0.9" step="0.05" value="0.5" aria-describedby="optTauInfo">
+        <div class="note" id="optTauInfo"></div>
+      </div>
+      <label><input type="checkbox" id="optNomCol" checked> Colours must be nominated after a red</label>
+      <label class="sub"><input type="checkbox" id="optNomGuess" checked> Nominate obvious colours for me</label>
+      <div class="note">After a red you nominate the colour you are playing: right-click it on the table. Hitting another colour first, or potting a different one, is a foul. With "obvious colours" on, the game plays your shot 120 times in its head with three times your usual slips. If the cue ball always meets the same colour first, that colour is nominated for you. If not, you are asked which colour you mean. Your shot is then locked in as you set it and is played the moment you nominate, so nominate before you shoot if in doubt.</div>
+      <label><input type="checkbox" id="optAutoNom" checked> Nominate free balls automatically (computer's pick)</label>
+      <div class="note">With a free ball the computer picks a ball for you in about 0.2 s and marks it with a gold ring. Right-click any other ball to nominate it instead. With this off you must right-click a ball before you can shoot.</div>
+    </div>
+  </div>
+</div>
+
+<div id="profEd" class="overlay" hidden>
+  <div class="card wide">
+    <h1>Player profiles</h1>
+    <p>A profile describes how your cue arm slips when human error is on. You set four things for each part of the stroke:</p>
+    <ul class="peExplain">
+      <li><b>Gentle</b> and <b>Full power</b>: the typical slip on a soft touch and on your hardest shot. Two shots out of three stay within this distance, the rest go further.</li>
+      <li><b>Curve</b>: how the slip grows in between. At 1 it grows evenly with power. Above 1 you stay accurate until you really hit hard. Below 1 even a medium-paced shot costs you accuracy.</li>
+      <li><b>Tendency</b>: a habit that pushes every shot the same way, such as always cutting a little to the right or underhitting.</li>
+    </ul>
+    <p class="peFormula">slip = gentle + (full power − gentle) · <i>s</i><sup>curve</sup>, where <i>s</i> is the cue-ball speed as a fraction of the hardest possible shot. The bot plays with the same profile you choose.</p>
+    <div class="peTop">
+      <select id="peList" aria-label="Profile"></select>
+      <button id="peNew">New</button><button id="peDup">Duplicate</button><button id="peDel">Delete</button>
+    </div>
+    <label class="peName">Name <input id="peName" maxlength="32"></label>
+    <div id="peRO" class="note">Built-in profiles can't be changed. Duplicate one to make your own.</div>
+    <div class="peHead"><span></span><span>Gentle</span><span>Full power</span><span>Curve</span><span>Tendency</span><span>Slip across the power bar</span></div>
+    <div id="peRows"></div>
+    <div class="peMiss">
+      <label>Bad-stroke chance <input id="peMissP" type="number" min="0" max="50" step="0.5"> %</label>
+      <label>Bad stroke size × <input id="peMissM" type="number" min="1" max="10" step="0.5"></label>
+      <span class="note">On a bad stroke (a twitch, a lifted head) every slip of that shot is multiplied by the size.</span>
+    </div>
+    <div class="peBtns"><button id="peUse">Play with this profile</button><button id="peClose">Close</button></div>
+  </div>
+</div>
+
+<div id="help" class="overlay" hidden>
+  <div class="card">
+    <h1>Controls</h1>
+    <div class="keys">
+      <kbd>Drag</kbd><span>Aim. In cue view drag sideways; in top and orbit view the cue points where you drag</span>
+      <kbd>← →</kbd><span>Fine aim 0.1°. Hold Shift for 0.01°, Ctrl for 1°</span>
+      <kbd>Power bar</kbd><span>Drag down to pull the cue back, release to shoot. Drag back to the top to cancel</span>
+      <kbd>Space</kbd><span>Hold to charge power, release to shoot. Esc cancels</span>
+      <kbd>W A S D</kbd><span>Move the tip on the cue ball (follow, draw, side). X recentres. Readout: ↔ side, ↕ height</span>
+      <kbd>Right-drag</kbd><span>Orbit camera / raise cue view. Scroll to zoom</span>
+      <kbd>C</kbd><span>Camera: cue, orbit, top, flat 2D (your choice is remembered)</span>
+      <kbd>Right-click</kbd><span>Abort a shot while pulling the cue back. On a ball (snooker): nominate the colour you are playing after a red, or the free ball</span>
+      <kbd>G · M · N</kbd><span>Guide lines · sound · new game</span>
+      <kbd>F</kbd><span>Hold to fast-forward a shot</span>
+      <kbd>U</kbd><span>Hide or show all panels. The Display button picks single panels</span>
+      <kbd>Ball in hand</kbd><span>Drag the cue ball to place it</span>
+    </div>
+    <button id="helpClose">Back to the table</button>
+  </div>
+</div>
+
+<div id="over" class="overlay" hidden>
+  <div class="card">
+    <h1 id="overTitle">Player 1 wins</h1>
+    <p id="overText"></p>
+    <div class="modes"><button id="overAgain">Play again<small>Same mode</small></button><button id="overMenu">Menu<small>Change mode</small></button></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+const WASM_B64 = "__WASM_B64__";
+function makeJsEngine() {
+/*__JS_FALLBACK__*/
+return retasmFunc;
+}
+
+// ------------------------------------------------------------------ engine
+let E = null, OUT = null;
+async function loadEngine() {
+  const bin = atob(WASM_B64); const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  try {
+    const { instance } = await WebAssembly.instantiate(bytes, { env: {} });
+    E = instance.exports;
+  } catch (err) {
+    // WebAssembly blocked: use the same C++ engine translated to plain JS (wasm2js)
+    E = makeJsEngine();
+  }
+  OUT = new Float64Array(E.memory.buffer, E.outPtr(), 1024);
+}
+
+// ------------------------------------------------------------------ state
+const S = {
+  mode: "two", noisy: false, skill: 1, type: 0, builtType: -1, effort: 400,
+  phase: "menu",            // menu | aim | stroke | moving | over
+  phi: 0, power: 0.35, a: 0, b: 0,
+  charging: false, chargeSrc: null, chargeT: 0,
+  cam: "cue", guide: true, sound: true,
+  R: 0.028575, L: 2.54, W: 1.27,
+  balls: [], game: {}, ff: false,
+  dragging: null,           // 'aim' | 'cue' | {ball}
+  pointerDown: false,
+};
+const COLORS = { 0: "#f4efe2", 1: "#f2c230", 2: "#1f4fbf", 3: "#d42a2a", 4: "#5b2d8c", 5: "#f07d1a", 6: "#1c7a3e", 7: "#7a1f1f", 8: "#141414" };
+for (let i = 9; i <= 15; i++) COLORS[i] = COLORS[i - 8];
+const SNK_COLORS = { 0: "#f4efe2", 16: "#f2c12e", 17: "#13703f", 18: "#6b3a1e", 19: "#1d4fb0", 20: "#f08aa8", 21: "#121212" };
+for (let i = 1; i <= 15; i++) SNK_COLORS[i] = "#b3121b";
+const SNK_NAMES = { 16: "yellow", 17: "green", 18: "brown", 19: "blue", 20: "pink", 21: "black" };
+const ballColor = (i) => (S.type === 1 ? SNK_COLORS[i] : COLORS[i]);
+
+function readState() {
+  E.sync();
+  const g = S.game;
+  g.n = OUT[0]; g.turn = OUT[1]; g.group = [OUT[2], OUT[3]]; g.isBreak = OUT[4]; g.ballInHand = OUT[5];
+  g.kitchen = OUT[6]; g.winner = OUT[7]; g.foul = OUT[8]; g.kept = OUT[9]; g.shots = OUT[10];
+  S.R = OUT[11]; S.L = OUT[12]; S.W = OUT[13];
+  if (S.type === 1) S.snk = { score: [OUT[300], OUT[301]], brk: OUT[302], phase: OUT[303], next: OUT[304], foulPts: OUT[305], lastPts: OUT[306], remaining: OUT[307], reds: OUT[308], high: [OUT[309], OUT[310]],
+    freeBall: OUT[312], freeNom: OUT[313], freeAvail: OUT[314], pending: OUT[315], lastMiss: OUT[316], offender: OUT[317], missCount: [OUT[318], OUT[319]],
+    ref: { checked: OUT[320], reason: OUT[321], direct: OUT[322], pStar: OUT[323], pPlayed: OUT[324], esc: OUT[325], r1: OUT[326], r2: OUT[327], forfeit: OUT[328] },
+    choiceBest: OUT[329], choiceVals: [OUT[330], OUT[331], OUT[332]], needSnookers: OUT[333], nominated: OUT[334], nomRequired: OUT[335] };
+  for (let i = 0; i < g.n; i++) {
+    const o = 16 + 12 * i;
+    const b = S.balls[i] || (S.balls[i] = {});
+    b.x = OUT[o]; b.y = OUT[o + 1]; b.on = OUT[o + 2]; b.pocket = OUT[o + 3];
+    b.qw = OUT[o + 4]; b.qx = OUT[o + 5]; b.qy = OUT[o + 6]; b.qz = OUT[o + 7];
+    b.vx = OUT[o + 8]; b.vy = OUT[o + 9];
+  }
+}
+
+// ------------------------------------------------------------------ three.js scene
+let renderer, scene, camera, ortho, clock;
+const activeCam = () => (S.cam === "2d" ? ortho : camera);
+const ballMeshes = [];
+const ballInit = [];       // per-ball initial orientation quaternion
+const tmpQ = new THREE.Quaternion();
+const E2T = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+
+function canvasTex(w, h, draw, repeat) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.anisotropy = 8;
+  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
+  return t;
+}
+function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+function feltTexture() {
+  return canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = "#1d6b45"; g.fillRect(0, 0, w, h);
+    const r = rng(7); const img = g.getImageData(0, 0, w, h); const d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * 18; d[i] += n * 0.6; d[i + 1] += n; d[i + 2] += n * 0.7; }
+    g.putImageData(img, 0, 0);
+  }, [6, 3]);
+}
+function woodTexture(base, dark, seed, horiz) {
+  return canvasTex(1024, 256, (g, w, h) => {
+    g.fillStyle = base; g.fillRect(0, 0, w, h);
+    const r = rng(seed);
+    for (let k = 0; k < 140; k++) {
+      const y0 = r() * h, amp = 2 + r() * 6, f = 0.004 + r() * 0.01, ph = r() * 6.28;
+      g.strokeStyle = dark; g.globalAlpha = 0.05 + r() * 0.14; g.lineWidth = 0.6 + r() * 2.2;
+      g.beginPath();
+      for (let x = 0; x <= w; x += 8) { const y = y0 + Math.sin(x * f + ph) * amp + Math.sin(x * f * 3.1 + ph * 2) * amp * 0.3; x ? g.lineTo(x, y) : g.moveTo(x, y); }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  }, horiz ? [2, 1] : [1, 1]);
+}
+
+function ballTexture(n) {
+  if (S.type === 1) return canvasTex(512, 256, (g, w, h) => {
+    g.fillStyle = SNK_COLORS[n]; g.fillRect(0, 0, w, h);
+    if (n === 0) {   // faint spots so spin stays visible
+      g.fillStyle = "rgba(160,40,30,0.75)";
+      for (const u of [0, 0.25, 0.5, 0.75, 1]) { g.beginPath(); g.ellipse(u * w, h * 0.5, 7, 7, 0, 0, 7); g.fill(); }
+      g.fillRect(0, 0, w, h * 0.03); g.fillRect(0, h * 0.97, w, h * 0.03);
+    }
+  });
+  return canvasTex(1024, 512, (g, w, h) => {
+    const col = COLORS[n];
+    const stripe = n >= 9;
+    g.fillStyle = (n === 0 || stripe) ? "#f2ecdc" : col; g.fillRect(0, 0, w, h);
+    if (stripe) { g.fillStyle = col; g.fillRect(0, h * 0.27, w, h * 0.46); }
+    if (n === 0) {   // measle dots so spin is visible
+      g.fillStyle = "#c0392b";
+      for (const u of [0, 0.25, 0.5, 0.75, 1]) { g.beginPath(); g.ellipse(u * w, h * 0.5, 16, 16, 0, 0, 7); g.fill(); }
+      g.fillRect(0, 0, w, h * 0.035); g.fillRect(0, h * 0.965, w, h * 0.035);
+      return;
+    }
+    for (const u of [0.25, 0.75]) {
+      g.fillStyle = "#f6f1e4"; g.beginPath(); g.ellipse(u * w, h * 0.5, 62, 60, 0, 0, 7); g.fill();
+      g.fillStyle = "#141414"; g.font = "bold 66px 'Barlow Semi Condensed', Arial, sans-serif";
+      g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(String(n), u * w, h * 0.5 + 3);
+      if (n === 6 || n === 9) g.fillRect(u * w - 14, h * 0.5 + 34, 28, 4);
+    }
+  });
+}
+
+function buildScene() {
+  const stage = document.getElementById("stage");
+  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  stage.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color("#0c1110");
+  scene.fog = new THREE.Fog("#0c1110", 6, 14);
+  camera = new THREE.PerspectiveCamera(45, stage.clientWidth / stage.clientHeight, 0.01, 40);
+  ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 20);
+  clock = new THREE.Clock();
+
+  // environment map for glossy balls: lamp panels above a dark room
+  const envScene = new THREE.Scene();
+  envScene.background = new THREE.Color("#1a1f1c");
+  const panelMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 5.6, 4.8) });
+  for (const x of [-0.8, 0, 0.8]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.25), panelMat); p.position.set(x, 1.2, 0); p.rotation.x = Math.PI / 2; envScene.add(p); }
+  const wallMat = new THREE.MeshBasicMaterial({ color: "#2b2418", side: THREE.BackSide });
+  envScene.add(new THREE.Mesh(new THREE.BoxGeometry(8, 4, 6), wallMat));
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envTex = pmrem.fromScene(envScene, 0.02).texture;
+
+  // lights
+  scene.add(new THREE.HemisphereLight("#f2e6cf", "#0b100e", 0.35));
+  const key = new THREE.DirectionalLight("#fff3dc", 1.25);
+  key.position.set(0.25, 3.2, 0.35); key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  const sc = key.shadow.camera; sc.left = -1.6; sc.right = 1.6; sc.top = 1.0; sc.bottom = -1.0; sc.near = 1; sc.far = 5;
+  key.shadow.bias = -0.0004; key.shadow.radius = 3;
+  scene.add(key); S.key = key; S.points = [];
+  for (const x of [-0.75, 0.75]) { const p = new THREE.PointLight("#ffe9c4", 0.55, 4, 2); p.position.set(x, 1.05, 0); scene.add(p); S.points.push(p); }
+
+  // lamp shade
+  const shade = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.12, 0.42), new THREE.MeshStandardMaterial({ color: "#16301f", roughness: 0.5, metalness: 0.3 }));
+  shade.position.set(0, 1.25, 0); scene.add(shade);
+  S.lamp = [shade]; S.shade = shade;
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.84, 0.36), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 2.0, 1.7) }));
+  glow.rotation.x = Math.PI / 2; glow.position.set(0, 1.188, 0); scene.add(glow); S.lamp.push(glow); S.glow = glow; S.rods = [];
+  const brass = new THREE.MeshStandardMaterial({ color: "#b8924a", roughness: 0.35, metalness: 0.9 });
+  for (const x of [-0.85, 0.85]) { const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 2), brass); rod.position.set(x, 2.3, 0); scene.add(rod); S.lamp.push(rod); S.rods.push(rod); }
+
+  // floor
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshStandardMaterial({ color: "#14100c", roughness: 0.95 }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -0.78; floor.receiveShadow = true; scene.add(floor);
+
+  S.envTex = envTex;
+  buildCue();
+  buildGame();
+}
+
+// (Re)build everything that depends on the game type: table, balls, guides, lights
+function buildGame() {
+  if (S.tableGroup) {
+    scene.remove(S.tableGroup);
+    S.tableGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } });
+  }
+  S.tableGroup = new THREE.Group(); scene.add(S.tableGroup);
+  ballMeshes.length = 0; ballInit.length = 0; guide = {};
+  buildTable(S.envTex);
+  buildBalls(S.envTex);
+  buildGuides();
+  ballPlane.constant = -S.R;
+  const k = S.L / 2.54;
+  const sc = S.key.shadow.camera; sc.left = -(S.L / 2 + 0.35); sc.right = S.L / 2 + 0.35; sc.top = S.W / 2 + 0.35; sc.bottom = -(S.W / 2 + 0.35); sc.updateProjectionMatrix();
+  S.shade.scale.set(k, 1, 1); S.glow.scale.set(k, 1, 1);
+  S.rods[0].position.x = -0.85 * k; S.rods[1].position.x = 0.85 * k;
+  S.points[0].position.x = -0.75 * k; S.points[1].position.x = 0.75 * k;
+  camS.orbDist = 2.9 * k;
+  S.builtType = S.type;
+}
+
+// polygon boundary of a rectangle merged with (union) or cut by (cut) circles
+function rectCircleBoundary(hx, hy, circles, mode) {
+  const per = 4 * (hx + hy);
+  const P = (s) => {           // CCW from (0.3,-hy)
+    s = ((s % per) + per) % per;
+    let x0 = 0.3; const d1 = hx - x0;
+    if (s < d1) return [x0 + s, -hy]; s -= d1;
+    if (s < 2 * hy) return [hx, -hy + s]; s -= 2 * hy;
+    if (s < 2 * hx) return [hx - s, hy]; s -= 2 * hx;
+    if (s < 2 * hy) return [-hx, hy - s]; s -= 2 * hy;
+    return [-hx + s, -hy];
+  };
+  const inC = (p) => { for (let k = 0; k < circles.length; k++) { const c = circles[k]; if ((p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2 < c[2] * c[2]) return k; } return -1; };
+  const inRect = (p) => Math.abs(p[0]) < hx && Math.abs(p[1]) < hy;
+  const pts = []; let inside = -1, entry = null; const step = 0.002;
+  for (let s = 0; s <= per + 1e-9; s += step) {
+    const p = P(s); const k = inC(p);
+    if (inside < 0) {
+      if (k < 0) pts.push(p); else { inside = k; entry = pts.length ? pts[pts.length - 1] : p; }
+    } else if (k < 0) {
+      const c = circles[inside];
+      const t1 = Math.atan2(entry[1] - c[1], entry[0] - c[0]), t2 = Math.atan2(p[1] - c[1], p[0] - c[0]);
+      let dccw = t2 - t1; while (dccw < 0) dccw += 2 * Math.PI;
+      const cand = [dccw, dccw - 2 * Math.PI];
+      let pick = cand[0];
+      for (const d of cand) {
+        const tm = t1 + d / 2, mp = [c[0] + c[2] * Math.cos(tm), c[1] + c[2] * Math.sin(tm)];
+        if ((mode === "union") === !inRect(mp)) { pick = d; break; }
+      }
+      const nA = Math.max(8, Math.ceil(Math.abs(pick) / 0.08));
+      for (let i = 0; i <= nA; i++) { const t = t1 + pick * i / nA; pts.push([c[0] + c[2] * Math.cos(t), c[1] + c[2] * Math.sin(t)]); }
+      pts.push(p); inside = -1;
+    }
+  }
+  return pts;
+}
+
+function buildTable(envTex) {
+  const n = E.tableInfo();
+  const nseg = OUT[0], npt = OUT[1], npk = OUT[2], ncont = OUT[3];
+  const pockets = [], contours = [];
+  let k = 4 + 6 * nseg + 3 * npt;
+  for (let i = 0; i < npk; i++, k += 8) pockets.push({ cx: OUT[k], cy: OUT[k + 1], r: OUT[k + 2], mx: OUT[k + 3], my: OUT[k + 4] });
+  for (let c = 0; c < ncont; c++) { const n = OUT[k++]; const pts = []; for (let i = 0; i < n; i++, k += 2) pts.push([OUT[k], OUT[k + 1]]); contours.push(pts); }
+  S.pockets = pockets;
+  const hx = S.L / 2, hy = S.W / 2, wc = 0.05, rw = 0.13;
+
+  const snk = S.type === 1;
+  const feltMat = new THREE.MeshStandardMaterial({ map: feltTexture(), color: snk ? "#d6ffe0" : "#ffffff", roughness: 0.92, metalness: 0 });
+  const cushMat = new THREE.MeshStandardMaterial({ color: snk ? "#1f7040" : "#1b6440", map: feltTexture(), roughness: 0.9 });
+  const woodMat = new THREE.MeshStandardMaterial({ map: woodTexture("#4a2716", "#1c0c05", 3, true), roughness: 0.62, metalness: 0.05, envMap: envTex, envMapIntensity: 0.25 });
+  const apronMat = new THREE.MeshStandardMaterial({ map: woodTexture("#3b1f12", "#140803", 9, true), roughness: 0.5 });
+
+  // cloth (rectangle minus pocket holes)
+  const circ = pockets.map(p => [p.cx, p.cy, p.r]);
+  const clothPts = rectCircleBoundary(hx + 0.02, hy + 0.02, circ, "cut");
+  const clothShape = new THREE.Shape(clothPts.map(p => new THREE.Vector2(p[0], p[1])));
+  const clothGeo = new THREE.ShapeGeometry(clothShape);
+  clothGeo.rotateX(-Math.PI / 2);
+  // UVs from position
+  const pos = clothGeo.attributes.position, uv = clothGeo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + hx) / S.L, (pos.getZ(i) + hy) / S.W);
+  const cloth = new THREE.Mesh(clothGeo, feltMat); cloth.receiveShadow = true; S.tableGroup.add(cloth);
+
+  // pocket cups
+  const cupMat = new THREE.MeshStandardMaterial({ color: "#030303", roughness: 1, side: THREE.DoubleSide });
+  for (const p of pockets) {
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r * 0.92, 0.14, 40, 1, true), cupMat);
+    cup.position.copy(E2T(p.cx, p.cy, -0.07)); S.tableGroup.add(cup);
+    const bot = new THREE.Mesh(new THREE.CircleGeometry(p.r, 40), cupMat); bot.rotation.x = -Math.PI / 2;
+    bot.position.copy(E2T(p.cx, p.cy, -0.13)); S.tableGroup.add(bot);
+  }
+
+  // cushions: nose outline from the engine (facing, rounded jaw, rail, jaw, facing) closed along the back
+  const H = 0.040;
+  for (const pts of contours) {
+    let mx = 0, my = 0; for (const p of pts) { mx += p[0]; my += p[1]; } mx /= pts.length; my /= pts.length;
+    const longRail = Math.abs(my) / hy > Math.abs(mx) / hx;
+    const back = (p) => longRail ? [p[0], Math.sign(my) * (hy + wc)] : [Math.sign(mx) * (hx + wc), p[1]];
+    const poly = pts.concat([back(pts[pts.length - 1]), back(pts[0])]);
+    const shape = new THREE.Shape(poly.map(p => new THREE.Vector2(p[0], p[1])));
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: H, bevelEnabled: false });
+    geo.rotateX(-Math.PI / 2);
+    const m = new THREE.Mesh(geo, cushMat); m.castShadow = true; m.receiveShadow = true; S.tableGroup.add(m);
+  }
+
+  // wooden rails: outer rounded rectangle minus (inner rectangle ∪ pocket circles)
+  const ox = hx + wc + rw, oy = hy + wc + rw, cr = 0.06;
+  const outer = new THREE.Shape();
+  outer.moveTo(-ox + cr, -oy); outer.lineTo(ox - cr, -oy); outer.quadraticCurveTo(ox, -oy, ox, -oy + cr);
+  outer.lineTo(ox, oy - cr); outer.quadraticCurveTo(ox, oy, ox - cr, oy); outer.lineTo(-ox + cr, oy);
+  outer.quadraticCurveTo(-ox, oy, -ox, oy - cr); outer.lineTo(-ox, -oy + cr); outer.quadraticCurveTo(-ox, -oy, -ox + cr, -oy);
+  const holePts = rectCircleBoundary(hx + wc, hy + wc, pockets.map(p => [p.cx, p.cy, p.r + 0.006]), "union");
+  outer.holes.push(new THREE.Path(holePts.map(p => new THREE.Vector2(p[0], p[1]))));
+  const railGeo = new THREE.ExtrudeGeometry(outer, { depth: 0.046, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 3, curveSegments: 12 });
+  railGeo.rotateX(-Math.PI / 2);
+  const rp = railGeo.attributes.position, ru = railGeo.attributes.uv;
+  for (let i = 0; i < rp.count; i++) ru.setXY(i, rp.getX(i) * 0.6 + rp.getY(i) * 0.3, rp.getZ(i) * 0.6);
+  const rails = new THREE.Mesh(railGeo, woodMat); rails.castShadow = true; rails.receiveShadow = true; S.tableGroup.add(rails);
+
+  // apron / body
+  const aw = 0.06;   // apron sits under the outer part of the rail, clear of the pocket cups
+  const bodyParts = [[2 * ox, 0.06, 2 * oy, 0, -0.19, 0], [2 * ox, 0.16, aw, 0, -0.08, oy - aw / 2], [2 * ox, 0.16, aw, 0, -0.08, -(oy - aw / 2)],
+    [aw, 0.16, 2 * oy, ox - aw / 2, -0.08, 0], [aw, 0.16, 2 * oy, -(ox - aw / 2), -0.08, 0]];
+  for (const [w, h, d, x, y, z] of bodyParts) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), apronMat); m.position.set(x, y - 0.002, z); m.receiveShadow = true; S.tableGroup.add(m); }
+  const legMat = apronMat;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), legMat);
+    leg.position.set(sx * (ox - 0.16), -0.5, sz * (oy - 0.16)); S.tableGroup.add(leg);
+  }
+
+  const lineMat = new THREE.MeshBasicMaterial({ color: "#d8e6dc", transparent: true, opacity: 0.35 });
+  const spotMat = new THREE.MeshBasicMaterial({ color: "#cfd9cf", transparent: true, opacity: 0.55 });
+  const spot = (x, y) => { const s = new THREE.Mesh(new THREE.CircleGeometry(0.005, 16), spotMat); s.rotation.x = -Math.PI / 2; s.position.copy(E2T(x, y, 0.0006)); S.tableGroup.add(s); };
+  if (snk) {
+    E.snookerGeo();
+    const bx = OUT[0], dR = OUT[1];
+    const bl = new THREE.Mesh(new THREE.PlaneGeometry(0.0025, S.W), lineMat);
+    bl.rotation.x = -Math.PI / 2; bl.position.copy(E2T(bx, 0, 0.0007)); S.tableGroup.add(bl);
+    const dGeo = new THREE.RingGeometry(dR - 0.0012, dR + 0.0012, 96, 1, Math.PI / 2, Math.PI); dGeo.rotateX(-Math.PI / 2);
+    const dMat = new THREE.MeshBasicMaterial({ color: "#d8e6dc", transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+    const dm = new THREE.Mesh(dGeo, dMat); dm.position.copy(E2T(bx, 0, 0.0007)); S.tableGroup.add(dm);
+    for (let i = 0; i < 6; i++) spot(OUT[2 + 2 * i], OUT[3 + 2 * i]);
+    S.kitchenLine = dm;
+    return;
+  }
+  // diamonds (sights)
+  const pearl = new THREE.MeshStandardMaterial({ color: "#efe7d2", roughness: 0.25, metalness: 0.1, envMap: envTex });
+  const dGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.003, 4); // rhombus via 4 segments
+  const dy = hy + wc + rw * 0.5, dx = hx + wc + rw * 0.5;
+  for (const k of [-3, -2, -1, 1, 2, 3]) for (const sy of [-1, 1]) {
+    const d = new THREE.Mesh(dGeo, pearl); d.position.copy(E2T(k * S.L / 8, sy * dy, 0.0525)); d.rotation.y = Math.PI / 4; d.scale.set(1, 1, 0.55); S.tableGroup.add(d);
+  }
+  for (const k of [-1, 0, 1]) for (const sx of [-1, 1]) {
+    const d = new THREE.Mesh(dGeo, pearl); d.position.copy(E2T(sx * dx, k * S.W / 4, 0.0525)); d.rotation.y = Math.PI / 4; d.scale.set(0.55, 1, 1); S.tableGroup.add(d);
+  }
+
+  // spots + head string
+  for (const x of [-S.L / 4, S.L / 4]) spot(x, 0);
+  const ks = new THREE.Mesh(new THREE.PlaneGeometry(0.003, S.W), lineMat.clone());
+  ks.rotation.x = -Math.PI / 2; ks.position.copy(E2T(E.headStringX(), 0, 0.0007)); S.tableGroup.add(ks);
+  S.kitchenLine = ks;
+}
+
+function buildBalls(envTex) {
+  const geo = new THREE.SphereGeometry(S.R, 48, 32);
+  const r = rng(11);
+  const nb = S.type === 1 ? 22 : 16;
+  for (let i = 0; i < nb; i++) {
+    const mat = new THREE.MeshPhysicalMaterial({ map: ballTexture(i), roughness: 0.18, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.06, envMap: envTex, envMapIntensity: 1.0 });
+    const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = false;
+    S.tableGroup.add(m); ballMeshes.push(m);
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(r() * 6.28, r() * 6.28, r() * 6.28));
+    if (i === 0) q.identity();
+    ballInit.push(q);
+  }
+  // ghost ball used for invalid placement
+  const rg = new THREE.RingGeometry(S.R * 1.25, S.R * 1.55, 48); rg.rotateX(-Math.PI / 2);
+  S.fbRing = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ color: "#e8c46a", transparent: true, opacity: 0.9, depthWrite: false }));
+  S.fbRing.visible = false; S.tableGroup.add(S.fbRing);
+  S.placeGhost = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: "#e0644f", transparent: true, opacity: 0.35 }));
+  S.placeGhost.visible = false; S.tableGroup.add(S.placeGhost);
+}
+
+// ------------------------------------------------------------------ cue stick
+let cue, cueMats = [];
+function buildCue() {
+  cue = new THREE.Group();
+  const sect = (r0, r1, z0, z1, mat) => {
+    const pts = [new THREE.Vector2(0.0001, z0), new THREE.Vector2(r0, z0), new THREE.Vector2(r1, z1), new THREE.Vector2(0.0001, z1)];
+    const g = new THREE.LatheGeometry(pts, 32); g.rotateX(Math.PI / 2);
+    const m = new THREE.Mesh(g, mat); m.castShadow = true; cue.add(m); cueMats.push(mat);
+  };
+  const M = (o) => new THREE.MeshStandardMaterial(Object.assign({ transparent: true }, o));
+  const tip = M({ color: "#3f6fa8", roughness: 0.9 });
+  const ferrule = M({ color: "#efe8d8", roughness: 0.3 });
+  const shaft = M({ map: woodTexture("#d9b98a", "#9c7a4c", 21, false), roughness: 0.35 });
+  const joint = M({ color: "#c9a45c", roughness: 0.25, metalness: 0.9 });
+  const fore = M({ map: woodTexture("#2b1a12", "#0b0503", 5, false), roughness: 0.3 });
+  const wrap = M({ color: "#1d1a19", roughness: 0.85 });
+  const ring = M({ color: "#c9a45c", roughness: 0.3, metalness: 0.8 });
+  const butt = M({ map: woodTexture("#5a1d14", "#1a0604", 6, false), roughness: 0.3 });
+  const bump = M({ color: "#0a0a0a", roughness: 0.7 });
+  sect(0.0062, 0.0063, 0, 0.009, tip);
+  sect(0.0064, 0.0065, 0.009, 0.031, ferrule);
+  sect(0.0065, 0.0068, 0.031, 0.30, shaft);
+  sect(0.0068, 0.0104, 0.30, 0.74, shaft);
+  sect(0.0108, 0.0108, 0.74, 0.765, joint);
+  sect(0.0110, 0.0124, 0.765, 1.05, fore);
+  sect(0.0125, 0.0127, 1.05, 1.058, ring);
+  sect(0.0128, 0.0135, 1.058, 1.30, wrap);
+  sect(0.0136, 0.0137, 1.30, 1.308, ring);
+  sect(0.0138, 0.0146, 1.308, 1.452, butt);
+  sect(0.0146, 0.0146, 1.452, 1.47, bump);
+  scene.add(cue);
+}
+const CUE_ELEV = 4.5 * Math.PI / 180;
+function placeCue(gap, opacity) {
+  const c = S.balls[0];
+  const dx = Math.cos(S.phi), dy = Math.sin(S.phi);
+  const back = new THREE.Vector3(-dx * Math.cos(CUE_ELEV), Math.sin(CUE_ELEV), dy * Math.cos(CUE_ELEV));   // engine (-dx,-dy) -> three (-dx, +dy)
+  const right = new THREE.Vector3(dy, 0, dx);    // engine (dy,-dx) -> three (dy, dx)
+  const contact = E2T(c.x, c.y, S.R).add(right.clone().multiplyScalar(S.a * S.R)).add(new THREE.Vector3(0, S.b * S.R, 0))
+    .add(back.clone().multiplyScalar(S.R * Math.sqrt(Math.max(0, 1 - S.a * S.a - S.b * S.b))));
+  cue.position.copy(contact.add(back.clone().multiplyScalar(gap)));
+  cue.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), back);
+  for (const m of cueMats) m.opacity = opacity;
+  cue.visible = opacity > 0.01;
+}
+
+// ------------------------------------------------------------------ guides
+let guide = {};
+function strip(color, opacity) {
+  const g = new THREE.PlaneGeometry(1, 1); g.rotateX(-Math.PI / 2);
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+  S.tableGroup.add(m); return m;
+}
+function setStrip(m, x1, y1, x2, y2, w, h = 0.0012) {
+  const a = E2T(x1, y1, h), b = E2T(x2, y2, h);
+  const len = a.distanceTo(b);
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.rotation.set(0, Math.atan2(-(b.z - a.z), b.x - a.x), 0);
+  m.scale.set(Math.max(len, 1e-4), 1, w);
+  m.visible = len > 1e-4;
+}
+function buildGuides() {
+  guide.line = strip("#f4f1e6", 0.55);
+  guide.obj = strip("#f4f1e6", 0.85);
+  guide.tan = strip("#9cc4ea", 0.5);
+  const rg = new THREE.RingGeometry(S.R - 0.0012, S.R, 48); rg.rotateX(-Math.PI / 2);
+  guide.ghost = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ color: "#f4f1e6", transparent: true, opacity: 0.8, depthWrite: false }));
+  S.tableGroup.add(guide.ghost);
+  // precision cone (2 sigma wedge)
+  const cg = new THREE.BufferGeometry(); cg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(9), 3));
+  guide.cone = new THREE.Mesh(cg, new THREE.MeshBasicMaterial({ color: "#5d9bd6", transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }));
+  guide.cone.frustumCulled = false; S.tableGroup.add(guide.cone);
+}
+function hideGuides() { for (const k in guide) guide[k].visible = false; }
+function updateGuides() {
+  if (!S.guide || (S.phase !== "aim" && S.phase !== "botaim")) { hideGuides(); return; }
+  const c = S.balls[0];
+  if (!c.on) { hideGuides(); return; }
+  const type = E.aim(S.phi, S.a);
+  const gx = OUT[2], gy = OUT[3], ox = OUT[4], oy = OUT[5], cx = OUT[6], cy = OUT[7], dx = OUT[8], dy = OUT[9];
+  setStrip(guide.line, c.x, c.y, gx, gy, 0.0018);
+  guide.ghost.visible = type !== 0; guide.ghost.position.copy(E2T(gx, gy, 0.0013));
+  if (type === 1) {
+    const tb = S.balls[OUT[1]];
+    setStrip(guide.obj, tb.x, tb.y, tb.x + ox * 0.32, tb.y + oy * 0.32, 0.0028);
+    setStrip(guide.tan, gx, gy, gx + cx * 0.22, gy + cy * 0.22, 0.0016);
+  } else if (type === 2) {
+    guide.obj.visible = false;
+    setStrip(guide.tan, gx, gy, gx + cx * 0.25, gy + cy * 0.25, 0.0016);
+  } else { guide.obj.visible = false; guide.tan.visible = false; }
+  // precision cone
+  if (S.noisy) {
+    E.noiseSigmas(S.power);
+    const sp = 2 * OUT[0];
+    const dist = Math.hypot(gx - c.x, gy - c.y) + 0.0001;
+    const phi = Math.atan2(dy, dx) + OUT[4];
+    const p = guide.cone.geometry.attributes.position;
+    const A = E2T(c.x, c.y, 0.0011);
+    const B = E2T(c.x + Math.cos(phi - sp) * dist, c.y + Math.sin(phi - sp) * dist, 0.0011);
+    const C = E2T(c.x + Math.cos(phi + sp) * dist, c.y + Math.sin(phi + sp) * dist, 0.0011);
+    p.setXYZ(0, A.x, A.y, A.z); p.setXYZ(1, B.x, B.y, B.z); p.setXYZ(2, C.x, C.y, C.z); p.needsUpdate = true;
+    guide.cone.visible = true;
+  } else guide.cone.visible = false;
+}
+
+// ------------------------------------------------------------------ ball rendering
+const potAnim = {};
+function updateBallMeshes(dt) {
+  for (let i = 0; i < ballMeshes.length; i++) {
+    const b = S.balls[i], m = ballMeshes[i];
+    if (!b) { m.visible = false; continue; }
+    if (b.on) {
+      delete potAnim[i];
+      m.visible = true; m.position.copy(E2T(b.x, b.y, S.R));
+      tmpQ.set(b.qx, b.qz, -b.qy, b.qw);
+      m.quaternion.copy(tmpQ).multiply(ballInit[i]);
+      b.wasOn = true;
+    } else {
+      if (b.wasOn && b.pocket >= 0 && S.phase !== "menu") {
+        potAnim[i] = { t: 0, x: b.x, y: b.y, pk: S.pockets[b.pocket] };
+        b.wasOn = false;
+      }
+      const a = potAnim[i];
+      if (a) {
+        a.t += dt;
+        const u = Math.min(1, a.t / 0.38);
+        const x = a.x + (a.pk.cx - a.x) * Math.min(1, u * 1.6), y = a.y + (a.pk.cy - a.y) * Math.min(1, u * 1.6);
+        m.position.copy(E2T(x, y, S.R - u * u * 0.13));
+        m.visible = u < 1;
+      } else m.visible = false;
+    }
+  }
+}
+
+// ------------------------------------------------------------------ camera
+const camS = { az: 0, el: 0.2, dist: 0.95, orbAz: -Math.PI / 2, orbEl: 0.85, orbDist: 2.9, pos: new THREE.Vector3(0, 3, 2), look: new THREE.Vector3() };
+function updateCamera(dt, snap) {
+  const c = S.balls[0] || { x: 0, y: 0 };
+  let pos, look;
+  const aspect = renderer.domElement.clientWidth / renderer.domElement.clientHeight;
+  if (S.cam === "2d" && !S.debugCam) {
+    const portrait = aspect < 1;
+    const needW = (portrait ? S.W : S.L) + 0.36, needH = (portrait ? S.L : S.W) + 0.36;
+    const vw = renderer.domElement.clientWidth, vh = renderer.domElement.clientHeight;
+    const ins = hudInsets(vw, vh), pad = 10;
+    let x0 = ins.L + pad, x1 = vw - ins.R - pad, y0 = ins.T + pad, y1 = vh - ins.B - pad;
+    if (x1 - x0 < vw * 0.4) { x0 = 0; x1 = vw; }
+    if (y1 - y0 < vh * 0.4) { y0 = 0; y1 = vh; }
+    const ppm = Math.min((x1 - x0) / needW, (y1 - y0) / needH);
+    const halfW = vw / 2 / ppm, halfH = vh / 2 / ppm;
+    const dxw = ((x0 + x1) / 2 - vw / 2) / ppm, dyw = ((y0 + y1) / 2 - vh / 2) / ppm;
+    const tgt = [-halfW - dxw, halfW - dxw, halfH + dyw, -halfH + dyw];
+    const kk = snap || !S.orthoInit ? 1 : 1 - Math.exp(-dt * 8);
+    S.orthoInit = true;
+    ortho.left += (tgt[0] - ortho.left) * kk; ortho.right += (tgt[1] - ortho.right) * kk;
+    ortho.top += (tgt[2] - ortho.top) * kk; ortho.bottom += (tgt[3] - ortho.bottom) * kk;
+    ortho.position.set(0, 5, 0); ortho.up.set(portrait ? 1 : 0, 0, portrait ? 0 : -1); ortho.lookAt(0, 0, 0);
+    ortho.updateProjectionMatrix();
+    for (const m of S.lamp) m.visible = false;
+    return;
+  }
+  if (S.cam === "cue") {
+    const dx = Math.cos(S.phi), dy = Math.sin(S.phi);
+    const tgt = E2T(c.x, c.y, S.R);
+    const back = new THREE.Vector3(-dx, 0, dy);
+    const d = camS.dist, el = camS.el;
+    pos = tgt.clone().add(back.multiplyScalar(d * Math.cos(el))).add(new THREE.Vector3(0, d * Math.sin(el) + 0.03, 0));
+    look = tgt.clone().add(new THREE.Vector3(dx, 0, -dy).multiplyScalar(0.35));
+    if (S.phase === "moving" && S.camFrozen) { pos = S.camFrozen.pos; look = S.camFrozen.look; }
+    camera.fov = 50;
+  } else if (S.cam === "orbit") {
+    const d = camS.orbDist;
+    pos = new THREE.Vector3(d * Math.cos(camS.orbEl) * Math.cos(camS.orbAz), d * Math.sin(camS.orbEl), -d * Math.cos(camS.orbEl) * Math.sin(camS.orbAz));
+    look = new THREE.Vector3(0, -0.05, 0);
+    camera.fov = 45;
+  } else {
+    camera.fov = 40;
+    const portrait = aspect < 1;
+    const needW = (portrait ? S.W : S.L) + 0.5, needH = (portrait ? S.L : S.W) + 0.5;
+    const vf = 2 * Math.tan((camera.fov * Math.PI / 180) / 2);
+    const h = Math.max(needH / vf, needW / (vf * aspect));
+    pos = new THREE.Vector3(0, h, 0.0001); look = new THREE.Vector3(0, 0, 0);
+    camera.up.set(portrait ? 1 : 0, 0, portrait ? 0 : -1);
+  }
+  if (S.debugCam) { pos = S.debugCam.pos; look = S.debugCam.look; snap = true; }
+  if (S.cam !== "top" || S.debugCam) camera.up.set(0, 1, 0);
+  for (const m of S.lamp) m.visible = S.cam !== "top" && camS.pos.y < 1.15;
+  const k = snap ? 1 : 1 - Math.exp(-dt * 9);
+  camS.pos.lerp(pos, k); camS.look.lerp(look, k);
+  camera.position.copy(camS.pos); camera.lookAt(camS.look);
+  camera.aspect = aspect; camera.updateProjectionMatrix();
+}
+
+// ------------------------------------------------------------------ sound (synthesised)
+let AC = null;
+function audio() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; } } return AC; }
+function click(freq, vol, decay, noise) {
+  const ac = audio(); if (!ac || !S.sound || vol < 0.003) return;
+  const t = ac.currentTime;
+  const g = ac.createGain(); g.gain.setValueAtTime(Math.min(vol, 1), t); g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+  g.connect(ac.destination);
+  const o = ac.createOscillator(); o.type = "sine"; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 0.7, t + decay); o.connect(g); o.start(t); o.stop(t + decay);
+  if (noise) {
+    const len = Math.floor(ac.sampleRate * 0.02), buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const s = ac.createBufferSource(); s.buffer = buf; const ng = ac.createGain(); ng.gain.value = noise * vol; s.connect(ng); ng.connect(ac.destination); s.start(t);
+  }
+}
+function playSounds() {
+  const n = OUT[600];
+  for (let i = 0; i < n && i < 12; i++) {
+    const type = OUT[601 + 4 * i], str = OUT[602 + 4 * i];
+    if (type === 1) click(2600 + Math.random() * 500, Math.min(1, str / 4) * 0.7, 0.06, 0.6);
+    else if (type === 2) click(140, Math.min(1, str / 4) * 0.6, 0.12, 0.25);
+    else if (type === 3) { click(90, 0.5, 0.25, 0.4); setTimeout(() => click(70, 0.3, 0.2, 0.2), 90); }
+  }
+}
+
+// ------------------------------------------------------------------ HUD
+const $ = (id) => document.getElementById(id);
+function chip(n, gone) {
+  const d = document.createElement("div"); d.className = "chip" + (gone ? " gone" : "");
+  const col = COLORS[n];
+  d.style.background = n >= 9 ? `linear-gradient(180deg, #f2ecdc 0 26%, ${col} 26% 74%, #f2ecdc 74%)` : col;
+  const s = document.createElement("span"); s.textContent = n; d.appendChild(s); return d;
+}
+function snkOnText() {
+  const k = S.snk; if (!k) return "";
+  const dot = (id) => `<i class="ball" style="background:${SNK_COLORS[id]}"></i>`;
+  let on;
+  if (k.phase === 0) on = `${dot(1)} Ball on: red`;
+  else if (k.phase === 1) on = `${dot(21)} Ball on: any colour`;
+  else on = `${dot(k.next)} Ball on: ${SNK_NAMES[k.next] || "-"}`;
+  const fb = k.freeBall ? ` · <b style="color:#e8c46a">free ball${k.freeNom > 0 ? ": " + BALL_NAME(k.freeNom) : ""}</b>`
+    : (k.phase === 1 && k.nomRequired ? ` · <b style="color:#9cc4ea">${k.nominated > 0 ? "nominated: " + SNK_NAMES[k.nominated] : "nominate a colour (right-click)"}</b>` : "");
+  const ns = k.needSnookers ? " · snookers required" : "";
+  return `${on}${fb} · ${k.remaining} remaining${ns} · ${k.reds} red${k.reds === 1 ? "" : "s"} left`;
+}
+function updateHUD() {
+  const g = S.game;
+  const practice = S.mode === "practice";
+  const snk = S.type === 1;
+  $("onLine").hidden = !snk; if (snk) $("onLine").innerHTML = snkOnText();
+  for (let p = 0; p < 2; p++) {
+    const pts = $("p" + p).querySelector(".pts");
+    pts.hidden = !snk || (practice && p === 1);
+    if (snk) pts.textContent = S.snk.score[p];
+  }
+  for (let p = 0; p < 2; p++) {
+    const el = $("p" + p);
+    el.classList.toggle("active", g.turn === p && !practice);
+    const grp = g.group[p];
+    el.querySelector(".grp").textContent = snk ? (g.turn === p && S.snk.brk > 0 ? `Break ${S.snk.brk}` : `High break ${S.snk.high[p]}`)
+      : practice ? (p === 0 ? "Practice" : "") : grp === 1 ? "Solids" : grp === 2 ? "Stripes" : "Open table";
+    const ch = el.querySelector(".chips"); ch.innerHTML = ""; ch.hidden = snk;
+    if (!snk && !practice && grp) {
+      const ids = grp === 1 ? [1, 2, 3, 4, 5, 6, 7] : [9, 10, 11, 12, 13, 14, 15];
+      for (const i of ids) ch.appendChild(chip(i, !S.balls[i].on));
+      ch.appendChild(chip(8, !S.balls[8].on));
+    }
+  }
+  $("p1").hidden = practice;
+  document.querySelector(".vs").hidden = practice;
+  $("p0").querySelector(".pname").textContent = practice ? "Practice table" : playerName(0);
+  $("p1").querySelector(".pname").textContent = playerName(1);
+  $("p0").classList.toggle("active", practice || g.turn === 0);
+  $("bRerack").hidden = !practice; $("bHand").hidden = !practice;
+  if (snk) { S.kitchenLine.visible = true; S.kitchenLine.material.opacity = g.ballInHand ? 0.8 : 0.35; }
+  else S.kitchenLine.visible = !!g.kitchen && !!g.ballInHand;
+  $("effortBox").hidden = !(S.mode === "bot" || S.mode === "watch");
+  updateHint();
+}
+function setMsg(text, cls) { const m = $("msg"); m.textContent = text; m.className = cls || ""; }
+function updateHint() {
+  const g = S.game;
+  let t;
+  if (g.ballInHand && S.phase === "aim" && S.type === 1) t = "Ball in hand in the D: drag the cue ball to place it, then shoot";
+  else if (g.ballInHand && S.phase === "aim") t = g.kitchen ? "Ball in hand behind the head string: drag the cue ball to place it, then shoot" : "Ball in hand: drag the cue ball anywhere, then shoot";
+  else if (S.phase === "botthink" || S.phase === "botaim") t = "The bot is at the table";
+  else if (S.cam === "cue") t = "Drag sideways to aim · ← → fine aim · drag the power bar down and release";
+  else t = "Drag on the table to aim · ← → fine aim · drag the power bar down and release";
+  $("hint").textContent = t;
+}
+function updatePowerUI() {
+  $("powerFill").style.height = (S.power * 100).toFixed(1) + "%";
+  $("power").setAttribute("aria-valuenow", Math.round(S.power * 100));
+  const v = E.powerToSpeed(S.power);
+  $("speed").innerHTML = v.toFixed(2) + "<small>m/s</small>";
+  const sg = $("sigma");
+  if (S.noisy) {
+    E.noiseSigmas(S.power);
+    sg.hidden = false;
+    sg.innerHTML = `${S.profile ? S.profile.name : ""}<br>aim ±${(OUT[0] * 1000).toFixed(1)} mm per m<br>strength ±${(OUT[1] * 100).toFixed(1)}%<br>tip ±${(OUT[2] * S.R * 1000).toFixed(1)} / ±${(OUT[3] * S.R * 1000).toFixed(1)} mm`;
+  } else sg.hidden = true;
+}
+
+// spin widget
+const spinCv = $("spin"), spinG = spinCv.getContext("2d");
+const MAXTIP = 0.55;
+function drawSpin() {
+  const w = spinCv.width, h = spinCv.height, r = w * 0.44, cx = w / 2, cy = h / 2;
+  spinG.clearRect(0, 0, w, h);
+  const grd = spinG.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r);
+  grd.addColorStop(0, "#fffaf0"); grd.addColorStop(0.7, "#e7dfcb"); grd.addColorStop(1, "#b9b09a");
+  spinG.fillStyle = grd; spinG.beginPath(); spinG.arc(cx, cy, r, 0, 7); spinG.fill();
+  spinG.strokeStyle = "rgba(0,0,0,0.18)"; spinG.lineWidth = 2;
+  spinG.beginPath(); spinG.moveTo(cx - r, cy); spinG.lineTo(cx + r, cy); spinG.moveTo(cx, cy - r); spinG.lineTo(cx, cy + r); spinG.stroke();
+  spinG.setLineDash([6, 6]); spinG.strokeStyle = "rgba(160,40,30,0.45)";
+  spinG.beginPath(); spinG.arc(cx, cy, r * MAXTIP, 0, 7); spinG.stroke(); spinG.setLineDash([]);
+  spinG.strokeStyle = "rgba(0,0,0,0.25)"; spinG.beginPath(); spinG.arc(cx, cy, r * 0.4, 0, 7); spinG.stroke();
+  // tip marker
+  const tx = cx + S.a * r, ty = cy - S.b * r;
+  if (S.noisy) {
+    E.noiseSigmas(S.power);
+    spinG.fillStyle = "rgba(93,155,214,0.28)"; spinG.beginPath();
+    spinG.ellipse(tx + OUT[6] * r, ty - OUT[7] * r, Math.max(3, 2 * OUT[2] * r), Math.max(3, 2 * OUT[3] * r), 0, 0, 7); spinG.fill();
+  }
+  spinG.fillStyle = "#3f6fa8"; spinG.beginPath(); spinG.arc(tx, ty, 11, 0, 7); spinG.fill();
+  spinG.strokeStyle = "#0b1b2d"; spinG.lineWidth = 2; spinG.stroke();
+  const fmt = (v) => (v < -0.005 ? "\u2212" : "+") + Math.abs(v).toFixed(2);
+  $("spinTxt").textContent = "\u2194 " + fmt(S.a) + "   \u2195 " + fmt(S.b);
+}
+function setSpinFromEvent(ev) {
+  const rc = spinCv.getBoundingClientRect();
+  let a = ((ev.clientX - rc.left) / rc.width - 0.5) / 0.44, b = -((ev.clientY - rc.top) / rc.height - 0.5) / 0.44;
+  const l = Math.hypot(a, b); if (l > MAXTIP) { a *= MAXTIP / l; b *= MAXTIP / l; }
+  S.a = a; S.b = b; drawSpin();
+}
+function nudgeSpin(da, db) {
+  let a = S.a + da, b = S.b + db; const l = Math.hypot(a, b);
+  if (l > MAXTIP) { a *= MAXTIP / l; b *= MAXTIP / l; }
+  S.a = a; S.b = b; drawSpin();
+}
+
+// ------------------------------------------------------------------ input
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const ballPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.028575);   // reset per game type
+function pointerTable(ev) {
+  const rc = renderer.domElement.getBoundingClientRect();
+  ndc.set(((ev.clientX - rc.left) / rc.width) * 2 - 1, -((ev.clientY - rc.top) / rc.height) * 2 + 1);
+  ray.setFromCamera(ndc, activeCam());
+  const p = new THREE.Vector3();
+  if (!ray.ray.intersectPlane(ballPlane, p)) return null;
+  return { x: p.x, y: -p.z };
+}
+function aimAt(pt) {
+  const c = S.balls[0];
+  const dx = pt.x - c.x, dy = pt.y - c.y;
+  if (Math.hypot(dx, dy) > 0.01) S.phi = Math.atan2(dy, dx);
+}
+function canInteract() { return S.phase === "aim" && !S.charging && !isBot(S.game.turn); }
+
+function setupInput() {
+  const cv = renderer.domElement;
+  cv.addEventListener("contextmenu", (e) => e.preventDefault());
+  cv.addEventListener("pointerdown", (ev) => {
+    audio();
+    cv.setPointerCapture(ev.pointerId);
+    S.lastX = ev.clientX; S.lastY = ev.clientY;
+    if (ev.button === 2) { S.dragging = "cam"; S.rc = { x: ev.clientX, y: ev.clientY }; return; }
+    if (!canInteract()) return;
+    const pt = pointerTable(ev);
+    const c = S.balls[0];
+    if (pt && (S.game.ballInHand || S.handOverride) && c.on && Math.hypot(pt.x - c.x, pt.y - c.y) < 2.5 * S.R) { S.dragging = "cue"; return; }
+    if (pt && S.mode === "practice" && S.cam === "top") {
+      for (let i = 1; i < 16; i++) { const b = S.balls[i]; if (b.on && Math.hypot(pt.x - b.x, pt.y - b.y) < 1.3 * S.R) { S.dragging = { ball: i }; return; } }
+      if (c.on && Math.hypot(pt.x - c.x, pt.y - c.y) < 1.3 * S.R) { S.dragging = "cue"; return; }
+    }
+    S.dragging = "aim";
+    if (S.cam !== "cue" && pt) aimAt(pt);
+  });
+  cv.addEventListener("pointermove", (ev) => {
+    const dx = ev.clientX - (S.lastX ?? ev.clientX), dy = ev.clientY - (S.lastY ?? ev.clientY);
+    S.lastX = ev.clientX; S.lastY = ev.clientY;
+    if (!S.dragging) return;
+    if (S.dragging === "cam") {
+      if (S.cam === "cue") { camS.el = Math.min(1.35, Math.max(0.05, camS.el + dy * 0.004)); }
+      else if (S.cam === "orbit") { camS.orbAz -= dx * 0.006; camS.orbEl = Math.min(1.5, Math.max(0.12, camS.orbEl + dy * 0.004)); }
+      return;
+    }
+    if (!canInteract()) return;
+    if (S.dragging === "aim") {
+      if (S.cam === "cue") { const sens = ev.shiftKey ? 0.00018 : 0.0022; S.phi -= dx * sens; }
+      else { const pt = pointerTable(ev); if (pt) aimAt(pt); }
+    } else if (S.dragging === "cue") {
+      const pt = pointerTable(ev); if (!pt) return;
+      if (E.placeCue(pt.x, pt.y)) { readState(); S.placeGhost.visible = false; }
+      else { S.placeGhost.visible = true; S.placeGhost.position.copy(E2T(pt.x, pt.y, S.R)); }
+    } else if (S.dragging.ball) {
+      const pt = pointerTable(ev); if (pt && E.moveBall(S.dragging.ball, pt.x, pt.y)) readState();
+    }
+  });
+  const end = () => { S.dragging = null; S.placeGhost.visible = false; };
+  cv.addEventListener("pointerup", (ev) => {
+    if (ev.button !== 2 || !S.rc) return;
+    const moved = Math.hypot(ev.clientX - S.rc.x, ev.clientY - S.rc.y); S.rc = null;
+    if (moved > 6) return;
+    nominateAt(ev);
+  });
+  cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
+  cv.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    const f = Math.exp(ev.deltaY * 0.001);
+    if (S.cam === "cue") camS.dist = Math.min(3, Math.max(0.25, camS.dist * f));
+    else if (S.cam === "orbit") camS.orbDist = Math.min(6, Math.max(0.8, camS.orbDist * f));
+  }, { passive: false });
+
+  // power bar
+  const pw = $("power");
+  const setP = (ev) => { const rc = pw.getBoundingClientRect(); S.power = Math.min(1, Math.max(0, (ev.clientY - rc.top) / rc.height)); updatePowerUI(); };
+  pw.addEventListener("pointerdown", (ev) => {
+    audio(); if (!canInteract() || !S.balls[0].on) return;
+    if (ev.button !== 0) return;
+    S.powerBefore = S.power;
+    pw.setPointerCapture(ev.pointerId); S.charging = true; S.chargeSrc = "bar"; setP(ev);
+  });
+  pw.addEventListener("pointermove", (ev) => { if (S.charging && S.chargeSrc === "bar") setP(ev); });
+  pw.addEventListener("pointerup", (ev) => {
+    if (!(S.charging && S.chargeSrc === "bar")) return;
+    S.charging = false;
+    if (S.power > 0.02) startStroke(); else { S.power = 0.35; updatePowerUI(); }
+  });
+
+  // spin widget
+  spinCv.addEventListener("pointerdown", (ev) => { spinCv.setPointerCapture(ev.pointerId); S.spinDrag = true; setSpinFromEvent(ev); });
+  spinCv.addEventListener("pointermove", (ev) => { if (S.spinDrag) setSpinFromEvent(ev); });
+  spinCv.addEventListener("pointerup", () => { S.spinDrag = false; });
+  spinCv.addEventListener("dblclick", () => { S.a = 0; S.b = 0; drawSpin(); });
+
+  window.addEventListener("keydown", (ev) => {
+    if (ev.target && ev.target.tagName === "INPUT" && ev.target.type !== "checkbox") return;
+    const k = ev.key;
+    if (k === "h" || k === "H") { toggleHelp(); return; }
+    if (S.phase === "menu" || !$("help").hidden) return;
+    if (k === "ArrowLeft" || k === "ArrowRight") {
+      if (!canInteract()) return;
+      const step = (ev.ctrlKey || ev.metaKey ? 1 : ev.shiftKey ? 0.01 : 0.1) * Math.PI / 180;
+      S.phi += (k === "ArrowLeft" ? 1 : -1) * step * (S.cam === "top" ? 1 : 1);
+      ev.preventDefault();
+    } else if (k === " ") {
+      ev.preventDefault();
+      if (ev.repeat || !canInteract() || !S.balls[0].on) return;
+      S.powerBefore = S.power; S.charging = true; S.chargeSrc = "key"; S.chargeT = 0; S.power = 0;
+    } else if (k === "Escape") cancelCharge();
+    else if (k === "w" || k === "W") nudgeSpin(0, 0.05);
+    else if (k === "s" || k === "S") nudgeSpin(0, -0.05);
+    else if (k === "a" || k === "A") nudgeSpin(-0.05, 0);
+    else if (k === "d" || k === "D") nudgeSpin(0.05, 0);
+    else if (k === "x" || k === "X") { S.a = 0; S.b = 0; drawSpin(); }
+    else if (k === "c" || k === "C") cycleCam();
+    else if (k === "g" || k === "G") toggleGuide();
+    else if (k === "m" || k === "M") toggleSound();
+    else if (k === "n" || k === "N") openMenu();
+    else if (k === "f" || k === "F") S.ff = true;
+    else if (k === "u" || k === "U") toggleAllHud();
+  });
+  window.addEventListener("keyup", (ev) => {
+    if (ev.key === " " && S.charging && S.chargeSrc === "key") {
+      S.charging = false;
+      if (S.power > 0.02) startStroke(); else { S.power = 0.35; updatePowerUI(); }
+    }
+    if (ev.key === "f" || ev.key === "F") S.ff = false;
+  });
+  window.addEventListener("resize", () => { const st = $("stage"); renderer.setSize(st.clientWidth, st.clientHeight); });
+
+  $("bMenu").onclick = openMenu;
+  $("bCam").onclick = cycleCam;
+  $("bGuide").onclick = toggleGuide;
+  $("bSound").onclick = toggleSound;
+  $("bHelp").onclick = toggleHelp;
+  $("helpClose").onclick = toggleHelp;
+  $("bRerack").onclick = () => { E.respotAll(); readState(); for (const b of S.balls) b.wasOn = b.on; S.phase = "aim"; updateHUD(); setMsg("Fresh rack. Place the cue ball behind the head string."); };
+  $("bHand").onclick = () => { if (S.phase !== "aim") return; E.placeCue(S.balls[0].x, S.balls[0].y); forceBallInHand(); };
+  $("mTwo").onclick = () => startGame("two");
+  $("mResume").onclick = () => { $("menu").hidden = true; S.phase = S.resumePhase || "aim"; maybeBotTurn(); };
+  $("mPractice").onclick = () => startGame("practice");
+  $("gPool").onclick = () => setType(0);
+  $("gSnk").onclick = () => setType(1);
+  $("effort").oninput = () => setEffort(effortFromSlider(+$("effort").value), "game");
+  $("optEffort").oninput = () => setEffort(effortFromSlider(+$("optEffort").value), "menu");
+  $("mBot").onclick = () => startGame("bot");
+  $("mWatch").onclick = () => startGame("watch");
+  $("overAgain").onclick = () => startGame(S.mode);
+  $("overMenu").onclick = () => { $("over").hidden = true; openMenu(); };
+  setupProfiles();
+  $("optMissMode").onchange = () => refSettingsChanged();
+  $("optTau").oninput = () => refSettingsChanged();
+  $("optAutoNom").onchange = () => refSettingsChanged();
+  $("optNomCol").onchange = () => refSettingsChanged();
+  $("optNomGuess").onchange = () => refSettingsChanged();
+  loadRefSettings();
+  $("bDisplay").onclick = () => { const p = $("displayPanel"); p.hidden = !p.hidden; $("bDisplay").setAttribute("aria-expanded", !p.hidden); };
+  document.querySelectorAll("#displayPanel input").forEach((cb) => { cb.onchange = applyDisplay; });
+  loadDisplay();
+}
+function cancelCharge() {
+  if (!S.charging) return false;
+  S.charging = false; S.power = S.powerBefore ?? 0.35; updatePowerUI();
+  setMsgTemp("Shot aborted.");
+  return true;
+}
+function setMsgTemp(t) { const m = $("msg"), old = m.textContent, oc = m.className; setMsg(t); clearTimeout(S.msgT); S.msgT = setTimeout(() => setMsg(old, oc), 1100); }
+window.addEventListener("mousedown", (ev) => { if (ev.button === 2 && cancelCharge()) ev.preventDefault(); }, true);
+window.addEventListener("pointerdown", (ev) => { if (ev.button === 2 && cancelCharge()) ev.preventDefault(); }, true);
+document.addEventListener("contextmenu", (ev) => { if (S.phase !== "menu") ev.preventDefault(); });
+// ------------------------------------------------------------------ player profiles (human error)
+// Stored in player units: aim in mm per metre, strength in %, tip in mm.
+const PCH = [
+  { key: "aim", label: "Aim", unit: "mm per m", tend: "+ = drifts right", step: 0.1 },
+  { key: "power", label: "Strength", unit: "%", tend: "+ = too hard", step: 0.1 },
+  { key: "side", label: "Tip left / right", unit: "mm", tend: "+ = unwanted right side", step: 0.05 },
+  { key: "height", label: "Tip high / low", unit: "mm", tend: "+ = hits too high", step: 0.05 },
+];
+function makePreset(id, name, m, curve, miss) {
+  return { id, name, builtin: true, missP: miss, missM: 3,
+    ch: { aim: { lo: 1.0 * m, hi: 8.0 * m, k: curve, mu: 0 }, power: { lo: 1.5 * m, hi: 7.5 * m, k: curve, mu: 0 },
+          side: { lo: 0.43 * m, hi: 2.7 * m, k: curve, mu: 0 }, height: { lo: 0.43 * m, hi: 2.7 * m, k: curve, mu: 0 } } };
+}
+const PRESETS = [
+  makePreset("pro", "Pro", 0.35, 1.6, 0.3),
+  makePreset("strong", "Strong amateur", 0.6, 1.3, 1),
+  makePreset("club", "Club player", 1, 1, 2),
+  makePreset("casual", "Casual", 1.6, 0.9, 4),
+  makePreset("beginner", "Beginner", 2.5, 0.7, 8),
+];
+const round2 = (v) => Math.round(v * 100) / 100;
+for (const p of PRESETS) for (const c of PCH) { const q = p.ch[c.key]; q.lo = round2(q.lo); q.hi = round2(q.hi); }
+let customProfiles = [];
+function allProfiles() { return PRESETS.concat(customProfiles); }
+function findProfile(id) { return allProfiles().find((p) => p.id === id) || PRESETS[2]; }
+function saveProfiles() { try { localStorage.setItem("feltchalk.profiles", JSON.stringify(customProfiles)); localStorage.setItem("feltchalk.profileId", S.profile.id); } catch (e) {} }
+function loadProfiles() {
+  try { customProfiles = JSON.parse(localStorage.getItem("feltchalk.profiles") || "[]").filter((p) => p && p.ch); } catch (e) { customProfiles = []; }
+  let id = "club"; try { id = localStorage.getItem("feltchalk.profileId") || "club"; } catch (e) {}
+  S.profile = findProfile(id);
+}
+// slip of one channel (player units) at power-bar position p in [0,1]
+function slipAt(q, p) {
+  const vmax = E.vmax(), V = E.powerToSpeed(p), s = Math.min(1, V / vmax);
+  return q.lo + (q.hi - q.lo) * Math.pow(s, q.k);
+}
+function applyProfile() {
+  const P = S.profile, Rmm = S.R * 1000;
+  const conv = [(v) => v / 1000, (v) => v / 100, (v) => v / Rmm, (v) => v / Rmm];
+  const convMu = [(v) => -v / 1000, (v) => v / 100, (v) => v / Rmm, (v) => v / Rmm];   // + aim tendency = clockwise
+  PCH.forEach((c, i) => { const q = P.ch[c.key]; OUT[i] = conv[i](q.lo); OUT[4 + i] = conv[i](q.hi); OUT[8 + i] = q.k; OUT[12 + i] = convMu[i](q.mu); });
+  OUT[16] = (P.missP || 0) / 100; OUT[17] = P.missM || 3;
+  E.setNoiseProfile();
+  describeProfile();
+  if (E && S.phase !== "menu") { updatePowerUI(); drawSpin(); }
+}
+function describeProfile() {
+  const P = S.profile;
+  const aim = P.ch.aim, pw = P.ch.power;
+  const soft = slipAt(aim, 0.3), full = slipAt(aim, 1), sSoft = slipAt(pw, 0.3), sFull = slipAt(pw, 1);
+  let t = `A typical shot drifts about <b>${soft.toFixed(1)} mm</b> sideways per metre when played softly, and <b>${full.toFixed(1)} mm</b> per metre at full power. Strength is off by about ${sSoft.toFixed(0)}% soft and ${sFull.toFixed(0)}% at full power.`;
+  if (P.missP > 0) t += ` About ${P.missP}% of strokes are bad ones with ${P.missM}× the slip.`;
+  $("optSkillInfo").innerHTML = t + " Only matters with human error on.";
+}
+function fillProfileSelects() {
+  for (const id of ["optProfile", "peList"]) {
+    const sel = $(id); sel.innerHTML = "";
+    for (const p of allProfiles()) { const o = document.createElement("option"); o.value = p.id; o.textContent = p.name + (p.builtin ? "" : " (yours)"); sel.appendChild(o); }
+  }
+  $("optProfile").value = S.profile.id;
+}
+let peSel = null;
+function drawSlipChart(cv, q, ref) {
+  const w = cv.width = cv.clientWidth * 2 || 300, h = cv.height = 108, g = cv.getContext("2d");
+  g.clearRect(0, 0, w, h);
+  const maxV = Math.max(q.hi, q.lo, ref.hi, ref.lo, 0.01) * 1.1;
+  const X = (p) => 4 + p * (w - 8), Y = (v) => h - 6 - (v / maxV) * (h - 14);
+  g.strokeStyle = "rgba(236,230,214,0.12)"; g.lineWidth = 1; g.beginPath(); g.moveTo(X(0), Y(0)); g.lineTo(X(1), Y(0)); g.stroke();
+  const line = (qq, col, dash) => { g.strokeStyle = col; g.setLineDash(dash); g.lineWidth = 3; g.beginPath(); for (let i = 0; i <= 40; i++) { const p = i / 40, v = slipAt(qq, p); i ? g.lineTo(X(p), Y(v)) : g.moveTo(X(p), Y(v)); } g.stroke(); g.setLineDash([]); };
+  line(ref, "rgba(201,164,92,0.6)", [6, 6]);
+  line(q, "#5d9bd6", []);
+  g.fillStyle = "rgba(154,164,156,0.9)"; g.font = "20px IBM Plex Mono, monospace"; g.fillText(maxV.toFixed(1), 6, 22);
+}
+function renderEditor() {
+  const P = peSel, ro = !!P.builtin, ref = PRESETS[2];
+  $("peList").value = P.id; $("peName").value = P.name; $("peName").disabled = ro;
+  $("peRO").hidden = !ro; $("peDel").disabled = ro;
+  $("peMissP").value = P.missP; $("peMissM").value = P.missM; $("peMissP").disabled = ro; $("peMissM").disabled = ro;
+  const rows = $("peRows"); rows.innerHTML = "";
+  PCH.forEach((c) => {
+    const q = P.ch[c.key];
+    const row = document.createElement("div"); row.className = "peRow";
+    row.innerHTML = `<div class="lab">${c.label}<small>${c.unit} · ${c.tend}</small></div>
+      <input type="number" data-f="lo" step="${c.step}" min="0" value="${q.lo}" aria-label="${c.label} gentle">
+      <input type="number" data-f="hi" step="${c.step}" min="0" value="${q.hi}" aria-label="${c.label} full power">
+      <div class="curve"><input type="range" data-f="k" min="0.3" max="3" step="0.1" value="${q.k}" aria-label="${c.label} curve"><span>${q.k.toFixed(1)}</span></div>
+      <input type="number" data-f="mu" step="${c.step}" value="${q.mu}" aria-label="${c.label} tendency">
+      <canvas></canvas>`;
+    rows.appendChild(row);
+    const cv = row.querySelector("canvas");
+    row.querySelectorAll("input").forEach((inp) => {
+      inp.disabled = ro;
+      inp.oninput = () => {
+        const v = parseFloat(inp.value); if (!isFinite(v)) return;
+        q[inp.dataset.f] = inp.dataset.f === "mu" ? v : Math.max(0, v);
+        if (inp.dataset.f === "k") row.querySelector(".curve span").textContent = v.toFixed(1);
+        drawSlipChart(cv, q, ref.ch[c.key]); profileEdited();
+      };
+    });
+    requestAnimationFrame(() => drawSlipChart(cv, q, ref.ch[c.key]));
+  });
+}
+function profileEdited() { saveProfiles(); if (peSel === S.profile) applyProfile(); }
+function setupProfiles() {
+  loadProfiles(); fillProfileSelects(); describeProfile();
+  $("optProfile").onchange = () => { S.profile = findProfile($("optProfile").value); saveProfiles(); applyProfile(); };
+  $("optProfileEdit").onclick = () => { peSel = S.profile; $("profEd").hidden = false; fillProfileSelects(); renderEditor(); };
+  $("peList").onchange = () => { peSel = findProfile($("peList").value); renderEditor(); };
+  $("peName").oninput = () => { peSel.name = $("peName").value || "Unnamed"; saveProfiles(); fillProfileSelects(); $("peList").value = peSel.id; };
+  $("peMissP").oninput = () => { const v = parseFloat($("peMissP").value); if (isFinite(v)) { peSel.missP = Math.min(50, Math.max(0, v)); profileEdited(); } };
+  $("peMissM").oninput = () => { const v = parseFloat($("peMissM").value); if (isFinite(v)) { peSel.missM = Math.min(10, Math.max(1, v)); profileEdited(); } };
+  const clone = (src, name) => { const p = JSON.parse(JSON.stringify(src)); p.id = "u" + Date.now().toString(36); p.name = name; p.builtin = false; customProfiles.push(p); return p; };
+  $("peNew").onclick = () => { peSel = clone(PRESETS[2], "My profile"); saveProfiles(); fillProfileSelects(); renderEditor(); };
+  $("peDup").onclick = () => { peSel = clone(peSel, peSel.name + " (copy)"); saveProfiles(); fillProfileSelects(); renderEditor(); };
+  $("peDel").onclick = () => {
+    if (peSel.builtin) return;
+    customProfiles = customProfiles.filter((p) => p !== peSel);
+    if (S.profile === peSel) { S.profile = PRESETS[2]; applyProfile(); }
+    peSel = PRESETS[2]; saveProfiles(); fillProfileSelects(); renderEditor();
+  };
+  $("peUse").onclick = () => { S.profile = peSel; saveProfiles(); fillProfileSelects(); applyProfile(); $("profEd").hidden = true; };
+  $("peClose").onclick = () => { $("profEd").hidden = true; fillProfileSelects(); };
+  applyProfile();
+}
+function effortTag(e) { return e < 60 ? "Quick" : e < 200 ? "Light" : e < 600 ? "Normal" : e < 1500 ? "Careful" : "Deep"; }
+function describeEffort() {
+  const e = S.effort;
+  const tag = effortTag(e);
+  $("optEffortTag").textContent = tag; $("effortTag").textContent = tag;
+  $("effortV").textContent = `tries ${e} shots`;
+  const t = S.msPerSim ? ` On this device that takes about ${(e * S.msPerSim / 1000).toFixed(1)} s per shot.` : "";
+  $("optEffortInfo").innerHTML = `Before every shot the bot plays <b>${e}</b> shots through in its head and keeps the best. First it looks at many different shots, then it fine-tunes the most promising ones. More thinking means it pots more, leaves itself better position and plays safer safeties, but you wait longer.${t}`;
+}
+const effortFromSlider = (v) => Math.round(20 * Math.pow(150, v));
+const sliderFromEffort = (e) => Math.log(e / 20) / Math.log(150);
+function setEffort(e, from) {
+  S.effort = Math.max(20, Math.min(3000, Math.round(e)));
+  describeEffort();
+  if (from !== "game") $("effort").value = sliderFromEffort(S.effort);
+  if (from !== "menu") $("optEffort").value = sliderFromEffort(S.effort);
+  try { localStorage.setItem("feltchalk.effort", String(S.effort)); } catch (e2) {}
+}
+function applyDisplay() {
+  const st = {};
+  document.querySelectorAll("#displayPanel input").forEach((cb) => { st[cb.dataset.el] = cb.checked; document.body.classList.toggle("hide-" + cb.dataset.el, !cb.checked); });
+  try { localStorage.setItem("feltchalk.display", JSON.stringify(st)); } catch (e) {}
+}
+function loadDisplay() {
+  let st = {}; try { st = JSON.parse(localStorage.getItem("feltchalk.display") || "{}"); } catch (e) {}
+  document.querySelectorAll("#displayPanel input").forEach((cb) => { if (cb.dataset.el in st) cb.checked = !!st[cb.dataset.el]; });
+  applyDisplay();
+}
+function toggleAllHud() { document.body.classList.toggle("hide-all"); if (document.body.classList.contains("hide-all")) $("displayPanel").hidden = true; }
+function loadRefSettings() {
+  try {
+    const st = JSON.parse(localStorage.getItem("feltchalk.referee") || "{}");
+    if (st.mode !== undefined) $("optMissMode").value = String(st.mode);
+    if (st.tau !== undefined) $("optTau").value = st.tau;
+    if (st.autoNom !== undefined) $("optAutoNom").checked = !!st.autoNom;
+    if (st.nomCol !== undefined) $("optNomCol").checked = !!st.nomCol;
+    if (st.nomGuess !== undefined) $("optNomGuess").checked = !!st.nomGuess;
+  } catch (e) {}
+  refSettingsChanged(true);
+}
+function refSettingsChanged(noSave) {
+  S.missMode = +$("optMissMode").value; S.tau = +$("optTau").value; S.autoNom = $("optAutoNom").checked;
+  S.nomCol = $("optNomCol").checked; S.nomGuess = $("optNomGuess").checked; $("optNomGuess").disabled = !S.nomCol;
+  if (E && E.setNomRequired) E.setNomRequired(S.nomCol ? 1 : 0);
+  $("optTauV").textContent = Math.round(S.tau * 100) + "%";
+  $("tauBox").hidden = S.missMode === 1;
+  $("optTauInfo").innerHTML = `After a failure to hit a ball on, the referee works out how often a player with <b>your profile</b> would hit a ball on from that position with the best escape (straight, off one or two cushions). If that is at least <b>${Math.round(S.tau * 100)}%</b>, it is a miss and the opponent may have the balls put back. A clear straight sight of a ball on is always a miss, and a shot that clearly wasn't a real attempt is also called. Lower values make the referee stricter.`;
+  if (E) E.refSettings(S.missMode, S.tau);
+  if (!noSave) try { localStorage.setItem("feltchalk.referee", JSON.stringify({ mode: S.missMode, tau: S.tau, autoNom: S.autoNom, nomCol: S.nomCol, nomGuess: S.nomGuess })); } catch (e) {}
+}
+function setType(t) {
+  S.type = t; $("snkRules").hidden = t !== 1;
+  $("gPool").setAttribute("aria-pressed", t === 0); $("gSnk").setAttribute("aria-pressed", t === 1);
+}
+const BALL_NAME = (id) => id >= 1 && id <= 15 ? "a red" : "the " + (SNK_NAMES[id] || "ball");
+function nominateAt(ev) {
+  const k = S.snk;
+  if (S.type !== 1 || !k || (S.phase !== "aim" && S.phase !== "nominate") || isBot(S.game.turn)) return;
+  if (!k.freeBall) { if (k.phase === 1 && k.nomRequired) nominateColourAt(ev); return; }
+  const pt = pointerTable(ev); if (!pt) return;
+  let best = -1, bd = 1.4 * S.R;
+  for (let i = 1; i < S.balls.length; i++) { const b = S.balls[i]; if (!b.on) continue; const d = Math.hypot(b.x - pt.x, b.y - pt.y); if (d < bd) { bd = d; best = i; } }
+  if (best < 0) { setMsgTemp("Right-click a coloured ball or a red (not the cue ball) to nominate it."); return; }
+  if (E.setFreeNom(best)) { readState(); S.fbBy = "you"; setMsg(`Free ball: you nominated ${BALL_NAME(best)}.`); updateHUD(); }
+}
+function ballUnder(ev, filter) {
+  const pt = pointerTable(ev); if (!pt) return -1;
+  let best = -1, bd = 1.4 * S.R;
+  for (let i = 1; i < S.balls.length; i++) { const b = S.balls[i]; if (!b.on || !filter(i)) continue; const d = Math.hypot(b.x - pt.x, b.y - pt.y); if (d < bd) { bd = d; best = i; } }
+  return best;
+}
+function nominateColourAt(ev) {
+  const id = ballUnder(ev, (i) => i >= 16);
+  if (id < 0) { setMsgTemp("Right-click a colour to nominate it."); return; }
+  nominateColour(id, false);
+}
+function nominateColour(id) {
+  if (!E.setNominated(id)) return false;
+  readState(); updateHUD();
+  if (S.storedShot) playStoredShot();          // a committed stroke goes as soon as you nominate
+  else setMsg(`You nominated the ${SNK_NAMES[id]}.`);
+  return true;
+}
+function playStoredShot() {
+  const st = S.storedShot; S.storedShot = null;
+  $("choicePanel").hidden = true;
+  S.phi = st.phi; S.power = st.power; S.a = st.a; S.b = st.b; updatePowerUI(); drawSpin();
+  S.phase = "aim";
+  setMsg(`Nominated the ${SNK_NAMES[S.snk.nominated]}.`);
+  startStroke();
+}
+// "Which colour are you playing?" The stroke is already committed: no counts are shown
+// (they would tell you the shot is ambiguous in a way a real player can't know) and it
+// can't be taken back. Nominating a colour plays it immediately.
+function showNomPanel() {
+  S.phase = "nominate";
+  $("chTitle").textContent = "Which colour are you playing?";
+  $("chRef").innerHTML = `It isn't obvious from your shot which colour you mean. Your shot is locked in exactly as you set it. Nominate a colour and it is played straight away.<small>Pick a colour below, or right-click it on the table.</small>`;
+  const box = $("chBtns"); box.innerHTML = "";
+  for (let id = 16; id <= 21; id++) {
+    if (!S.balls[id].on) continue;
+    const b = document.createElement("button");
+    b.innerHTML = `<span><i class="ball" style="background:${SNK_COLORS[id]}"></i>The ${SNK_NAMES[id]}</span><small>${id - 14} pts</small>`;
+    b.onclick = () => nominateColour(id, true);
+    box.appendChild(b);
+  }
+  $("choicePanel").hidden = false;
+  setMsg("Nominate a colour: your shot is played as soon as you do.");
+}
+// returns true if the stroke may go ahead
+function checkColourNomination() {
+  const k = S.snk;
+  if (S.type !== 1 || !k || k.phase !== 1 || !k.nomRequired || k.nominated > 0 || S.botShot || isBot(S.game.turn) || S.mode === "practice") return true;
+  S.storedShot = { phi: S.phi, power: S.power, a: S.a, b: S.b };
+  if (!S.nomGuess) { showNomPanel(); return false; }
+  const nd = E.nomGuess(S.phi, S.power, S.a, S.b, 120);
+  const counts = []; for (let j = 0; j < nd; j++) counts.push([OUT[1 + 2 * j], OUT[2 + 2 * j]]);
+  counts.sort((x, y) => y[1] - x[1]);
+  if (nd === 1) {
+    const id = counts[0][0];
+    if (id >= 16) { E.setNominated(id); readState(); updateHUD(); setMsg(`Nominated the ${SNK_NAMES[id]} (obvious from your shot).`); }
+    S.storedShot = null;
+    return true;          // a red or nothing first in every run: a foul whatever is nominated
+  }
+  showNomPanel();
+  return false;
+}
+
+// Offer the free ball to a human: the computer's pick (about 0.2 s of thinking) unless switched off
+function freeBallPrompt() {
+  const k = S.snk;
+  if (S.type !== 1 || !k || !k.freeBall || isBot(S.game.turn)) return;
+  if (!S.autoNom) { setMsg("Free ball! Right-click the ball you want to nominate, then shoot."); return; }
+  setMsg("Free ball! The computer is picking a ball for you…");
+  setTimeout(() => {
+    const budget = Math.max(40, Math.min(800, 200 / (S.msPerSim || 0.5)));
+    const t = E.botFavourite(S.noisy ? 1 : 0, budget);
+    if (t > 0 && E.setFreeNom(t)) {
+      readState(); S.fbBy = "computer";
+      const isOn = (k.phase === 0 && t <= 15) || (k.phase === 2 && t === k.next);
+      setMsg(isOn ? `Free ball: the computer would simply play ${BALL_NAME(t)}, a ball on anyway (gold ring). Right-click another ball to nominate it as the free ball.`
+                  : `Free ball: the computer nominated ${BALL_NAME(t)} (gold ring). Right-click another ball to change it.`);
+    }
+    else setMsg("Free ball! Right-click the ball you want to nominate, then shoot.");
+    updateHUD();
+  }, 30);
+}
+const RAILS = ["top cushion", "baulk cushion", "left side cushion", "right side cushion"];
+function refereeText() {
+  const k = S.snk, r = k.ref, prof = S.profile ? S.profile.name : "player";
+  if (!r.checked) return "";
+  const pct = (v) => Math.round(v * 100) + "%";
+  const esc = r.esc === 0 ? "straight at it" : r.esc === 1 ? `one cushion off the ${RAILS[r.r1]}` : r.esc === 2 ? `two cushions, ${RAILS[r.r1]} then ${RAILS[r.r2]}` : "";
+  switch (r.reason) {
+    case 1: return "Foul and a miss: there was a clear straight sight of a ball on.";
+    case 2: return `Foul and a miss: a ${prof} hits a ball on from there ${pct(r.pStar)} of the time (best escape: ${esc}).`;
+    case 3: return `Foul and a miss: not a real attempt. The shot played hits a ball on ${pct(r.pPlayed)} of the time, the best escape ${pct(r.pStar)} (${esc}).`;
+    case 4: return "Foul and a miss (pro rules).";
+    case 5: return "No miss: the striker needed snookers.";
+    case 6: return `No miss: hard escape. A ${prof} only hits a ball on ${pct(r.pStar)} of the time from there${esc ? " (best: " + esc + ")" : ""}, below the ${pct(S.tau)} threshold.`;
+  }
+  return "";
+}
+const lc = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+function handleChoice(baseMsg) {
+  const g = S.game, k = S.snk, chooser = g.turn, off = k.offender, name = playerName;
+  const labels = { 1: k.freeAvail ? "Play from here, with a free ball" : "Play from here", 2: `Make ${name(off)} play again from here`, 4: `Replace the balls, ${name(off)} plays again` };
+  const opts = [1, 2, 4].filter((o) => k.pending & o);
+  const val = (o) => k.choiceVals[o === 1 ? 0 : o === 2 ? 1 : 2];
+  let warn = "";
+  if (k.lastMiss && k.ref.direct && k.missCount[off] === 2) warn = ` Warning: a third miss with a clear sight of a ball on loses ${name(off) === "You" ? "you" : name(off)} the frame.`;
+  if (isBot(chooser)) {
+    const o = k.choiceBest;
+    E.snkChoose(o); readState();
+    setMsg(`${baseMsg} ${name(chooser)} chooses: ${lc(labels[o])}.${warn}`, "foul");
+    S.phase = "aim"; updateHUD();
+    if (isBot(S.game.turn)) setTimeout(maybeBotTurn, S.mode === "watch" ? 900 : 700);
+    else freeBallPrompt();
+    return;
+  }
+  S.phase = "choice";
+  setMsg(baseMsg, "foul");
+  $("chTitle").textContent = `${baseMsg}`;
+  $("chRef").innerHTML = (refereeText() || "") + (warn ? `<small>${warn.trim()}</small>` : "") + `<small>${name(chooser) === "You" ? "Your" : name(chooser) + "'s"} choice. The numbers are the computer's rough estimate of the points each option is worth to you.</small>`;
+  const box = $("chBtns"); box.innerHTML = "";
+  for (const o of opts) {
+    const b = document.createElement("button");
+    const v = val(o);
+    b.innerHTML = `<span>${labels[o]}</span><small>${v >= 0 ? "+" : ""}${v.toFixed(1)}${o === k.choiceBest ? " · suggested" : ""}</small>`;
+    if (o === k.choiceBest) b.className = "rec";
+    b.onclick = () => {
+      $("choicePanel").hidden = true;
+      E.snkChoose(o); readState();
+      S.phase = "aim";
+      setMsg(`${name(chooser)} ${name(chooser) === "You" ? "choose" : "chooses"}: ${lc(labels[o])}.`);
+      updateHUD();
+      if (isBot(S.game.turn)) setTimeout(maybeBotTurn, 500); else freeBallPrompt();
+    };
+    box.appendChild(b);
+  }
+  $("choicePanel").hidden = false;
+  updateHUD();
+}
+function forceBallInHand() { S.game.ballInHand = 1; S.handOverride = true; updateHint(); setMsg("Drag the cue ball to any free spot."); }
+const CAM_ORDER = ["cue", "orbit", "top", "2d"], CAM_LABEL = { cue: "Cue", orbit: "Orbit", top: "Top", "2d": "2D" };
+// space taken by the panels at each screen edge (px), for the 2D view
+function hudInsets(vw, vh) {
+  let L = 0, Rr = 0, T = 0, B = 0;
+  for (const id of ["tools", "spinWrap", "powerWrap", "report", "score", "hint"]) {
+    const el = $(id); if (!el || el.hidden || getComputedStyle(el).display === "none") continue;
+    const r = el.getBoundingClientRect(); if (r.width === 0 || r.height === 0) continue;
+    const cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
+    if (cx < vw * 0.3) L = Math.max(L, r.right);
+    else if (cx > vw * 0.7) Rr = Math.max(Rr, vw - r.left);
+    else if (cy < vh / 2) T = Math.max(T, r.bottom);
+    else B = Math.max(B, vh - r.top);
+  }
+  const cls = document.body.classList;
+  if (!cls.contains("hide-report") && !cls.contains("hide-all") && (S.noisy || S.mode === "bot" || S.mode === "watch")) Rr = Math.max(Rr, 250);
+  return { L, R: Rr, T, B };
+}
+function setCam(c) {
+  S.cam = c; document.body.classList.toggle("cam2d", c === "2d"); S.orthoInit = false; $("bCam").firstChild.textContent = "View: " + CAM_LABEL[c]; updateHint();
+  try { localStorage.setItem("feltchalk.view", c); } catch (e) {}
+}
+function cycleCam() { setCam(CAM_ORDER[(CAM_ORDER.indexOf(S.cam) + 1) % CAM_ORDER.length]); }
+function toggleGuide() { S.guide = !S.guide; $("bGuide").setAttribute("aria-pressed", S.guide); }
+function toggleSound() { S.sound = !S.sound; $("bSound").setAttribute("aria-pressed", S.sound); }
+function toggleHelp() { $("help").hidden = !$("help").hidden; }
+function openMenu() {
+  if (S.phase === "stroke" || S.phase === "moving" || S.phase === "botthink" || S.phase === "botaim" || S.phase === "nominate") return;
+  fillProfileSelects();
+  S.resumePhase = S.phase === "over" ? null : S.phase;
+  $("mResume").hidden = !S.resumePhase || S.resumePhase === "menu";
+  S.phase = "menu"; $("menu").hidden = false;
+}
+
+// ------------------------------------------------------------------ game flow
+function startGame(mode) {
+  S.mode = mode;
+  S.noisy = $("optNoise").checked;
+  E.newGame(Math.floor(Math.random() * 1e9), mode === "practice" ? 1 : 0, S.type);
+  readState();
+  applyProfile();
+  E.refSettings(S.missMode, S.tau);
+  if (S.type === 1) E.setNomRequired(S.nomCol ? 1 : 0);
+  $("choicePanel").hidden = true; S.storedShot = null;
+  if (S.builtType !== S.type) buildGame();
+  for (const b of S.balls) { b.wasOn = b.on; }
+  for (const k in potAnim) delete potAnim[k];
+  S.phi = 0; S.a = 0; S.b = 0; S.power = S.type === 1 ? 0.45 : 0.75;
+  S.phase = "aim";
+  $("menu").hidden = true; $("over").hidden = true; $("report").hidden = true;
+  updateHUD(); updatePowerUI(); drawSpin();
+  const where = S.type === 1 ? "in the D" : "behind the head string";
+  setMsg(mode === "practice" ? "Practice: break, or move balls around in top view." : mode === "watch" ? `Bot A ${S.type === 1 ? "breaks off" : "breaks"}.` : `${playerName(0) === "You" ? "Your" : playerName(0) + " to"} ${S.type === 1 ? "break-off" : "break"}. Place the cue ball ${where}.`);
+  updateCamera(0, true);
+  maybeBotTurn();
+}
+
+// ------------------------------------------------------------------ bots
+const BOT_USE_NN = { std: __NN_STD__, noisy: __NN_NOISY__ };
+const isBot = (p) => S.mode === "watch" || (S.mode === "bot" && p === 1);
+function playerName(p) {
+  if (S.mode === "bot") return p === 0 ? "You" : "Bot";
+  if (S.mode === "watch") return p === 0 ? "Bot A" : "Bot B";
+  return "Player " + (p + 1);
+}
+function vb(p, third, second) { const n = playerName(p); return n + " " + (n === "You" ? second : third); }
+function speedToPower(V) { const vmin = 0.15, vmax = E.vmax(); return Math.min(1, Math.max(0, Math.pow(Math.max(0, (V - vmin) / (vmax - vmin)), 1 / 1.6))); }
+function maybeBotTurn() {
+  if (S.phase !== "aim" || !isBot(S.game.turn) || S.game.winner >= 0) return;
+  S.phase = "botthink";
+  setMsg(`${playerName(S.game.turn)} is thinking…`);
+  updateHint();
+  setTimeout(() => {
+    if (S.phase !== "botthink") return;
+    const t0 = performance.now();
+    E.botThink(S.noisy ? 1 : 0, (S.noisy ? BOT_USE_NN.noisy : BOT_USE_NN.std) ? 1 : 0, S.effort);
+    const d = { place: OUT[0], px: OUT[1], py: OUT[2], phi: OUT[3], V: OUT[4], a: OUT[5], b: OUT[6], value: OUT[7], sims: OUT[8], cands: OUT[9],
+      full: OUT[10], partial: OUT[11], secant: OUT[12], refine: OUT[13], switches: OUT[14], p1: OUT[15], tgt: OUT[16] };
+    const ms = performance.now() - t0;
+    if (d.sims > 5) { const m = ms / d.sims; S.msPerSim = S.msPerSim ? 0.7 * S.msPerSim + 0.3 * m : m; describeEffort(); }
+    if (d.place) { E.placeCue(d.px, d.py); readState(); }
+    S.botFbMsg = "";
+    if (S.type === 1 && S.snk.freeBall && d.tgt > 0) { const t = d.tgt; if (E.setFreeNom(t)) { readState(); S.botFbMsg = ` Free ball: nominates ${BALL_NAME(t)}.`; } }
+    else if (S.type === 1 && S.snk.phase === 1 && d.tgt >= 16) { const t = d.tgt; if (E.setNominated(t)) { readState(); S.botFbMsg = ` Nominates the ${SNK_NAMES[t]}.`; } }
+    let to = d.phi; while (to - S.phi > Math.PI) to -= 2 * Math.PI; while (to - S.phi < -Math.PI) to += 2 * Math.PI;
+    S.botMove = { from: S.phi, to, t: 0, d };
+    S.a = d.a; S.b = d.b; S.power = speedToPower(d.V); drawSpin(); updatePowerUI();
+    const r = $("report"); r.hidden = false;
+    const est = S.type === 1 ? `est. value ${d.value >= 0 ? "+" : ""}${d.value.toFixed(1)} pts` : `est. win chance ${(d.value * 100).toFixed(0)}%`;
+    r.innerHTML = `<b>${playerName(S.game.turn).toUpperCase()} · DECISION</b>${est}<br>phase 1: ${d.cands} candidates, ${Math.round(d.p1)} sims<br>phase 2: ${d.refine} refinements, ${d.switches} switches<br>${d.full} full sims · ${d.partial} root-finding probes<br>budget ${Math.round(d.sims)} / ${S.effort} · ${(ms / 1000).toFixed(2)} s`;
+    S.phase = "botaim";
+    setMsg(`${playerName(S.game.turn)} is lining up the shot.${S.botFbMsg || ""}`);
+  }, S.mode === "watch" ? 450 : 300);
+}
+
+let stroke = null;
+function startStroke() {
+  if (S.type === 1 && !S.botShot && S.snk && S.snk.freeBall && S.snk.freeNom <= 0) {
+    S.power = S.powerBefore ?? S.power; updatePowerUI();
+    setMsg("Free ball: nominate a ball first. Right-click the ball you want to play.", "foul");
+    return;
+  }
+  if (!checkColourNomination()) return;
+  S.phase = "stroke";
+  const pull = S.botShot ? 0.06 + 0.26 * S.power : 0.03 + 0.26 * S.power;
+  stroke = { t: 0, pull, dur: 0.07 + 0.16 * (1 - S.power), follow: 0, shot: false };
+}
+function fireShot() {
+  const intended = { phi: S.phi, V: E.powerToSpeed(S.power), a: S.a, b: S.b };
+  if (S.botShot) { const d = S.botShot; intended.V = d.V; E.shootV(d.phi, d.V, d.a, d.b, S.noisy ? 1 : 0); S.botShot = null; S.lastShooterBot = true; }
+  else { E.shoot(S.phi, S.power, S.a, S.b, S.noisy ? 1 : 0); S.lastShooterBot = false; }
+  const ex = { phi: OUT[0], V: OUT[1], a: OUT[2], b: OUT[3], miscue: OUT[4] };
+  click(1800, 0.25 + S.power * 0.5, 0.05, 0.8);
+  if (S.noisy) {
+    const r = $("report"); r.hidden = false;
+    const head = S.lastShooterBot ? r.innerHTML + "<br>" : "";
+    const dphi = (ex.phi - intended.phi) * 180 / Math.PI;
+    r.innerHTML = head + `<b>LAST STROKE${ex.miscue ? " · MISCUE" : ""}</b>aim  ${dphi >= 0 ? "+" : ""}${dphi.toFixed(3)}°<br>speed ${ex.V.toFixed(2)} m/s (${((ex.V / intended.V - 1) * 100).toFixed(1)}%)<br>tip  ${ex.a >= 0 ? "+" : ""}${ex.a.toFixed(3)}, ${ex.b >= 0 ? "+" : ""}${ex.b.toFixed(3)} R`;
+  }
+  S.camFrozen = { pos: camS.pos.clone(), look: camS.look.clone() };
+  S.phase = "moving";
+  S.game.ballInHand = 0; S.handOverride = false;
+  S.kitchenLine.visible = false;
+}
+const FOULS = { 1: "scratch", 2: "no ball hit", 3: "wrong ball hit first", 4: "no rail after contact", 5: "illegal break" };
+function finishShot() {
+  const prevGroup = S.game.group.slice(), shooter = S.game.turn;
+  E.endShot();
+  const nPot = OUT[1];
+  readState();
+  for (const b of S.balls) if (b.on) b.wasOn = true;
+  const g = S.game;
+  const name = playerName;
+  S.a = 0; S.b = 0; drawSpin();
+  if (S.mode === "practice") {
+    S.phase = "aim";
+    setMsg(g.foul === 1 ? "Scratch. Cue ball in hand." : nPot ? `${nPot} ball${nPot > 1 ? "s" : ""} down.` : "Practice table.");
+    updateHUD(); return;
+  }
+  if (S.type === 1) { finishSnooker(shooter, nPot); return; }
+  if (g.winner >= 0) {
+    S.phase = "over";
+    const reason = g.winner === shooter ? "Cleared the group and sank the 8." : (g.foul ? `The 8 went down on a foul (${FOULS[g.foul]}).` : "The 8 went down before the group was cleared.");
+    setMsg(vb(g.winner, "wins", "win") + "!", "win");
+    $("overTitle").textContent = vb(g.winner, "wins", "win");
+    $("overText").textContent = reason;
+    updateHUD();
+    setTimeout(() => { $("over").hidden = false; }, 900);
+    return;
+  }
+  S.phase = "aim";
+  let msg, cls = "";
+  if (g.foul) { msg = `Foul: ${FOULS[g.foul]}. ${vb(g.turn, "has", "have")} ball in hand.`; cls = "foul"; }
+  else if (g.kept) msg = `${vb(g.turn, "continues", "continue")}.`;
+  else msg = playerName(g.turn) === "You" ? "Your shot." : `${name(g.turn)} to shoot.`;
+  if (!prevGroup[shooter] && g.group[shooter]) msg = `${vb(shooter, "takes", "take")} ${g.group[shooter] === 1 ? "solids" : "stripes"}. ` + msg;
+  setMsg(msg, cls);
+  updateHUD();
+  if (isBot(g.turn)) setTimeout(maybeBotTurn, S.mode === "watch" ? 700 : 500);
+}
+
+const SFOULS = { 1: "in-off", 2: "missed every ball", 3: "wrong ball hit first", 4: "potted a ball not on", 5: "snookered the opponent behind the free ball" };
+function finishSnooker(shooter, nPot) {
+  const g = S.game, k = S.snk, name = playerName;
+  if (S.mode === "practice") {
+    S.phase = "aim";
+    setMsg(g.foul === 1 ? "In-off. Cue ball in hand in the D." : k.lastPts ? `+${k.lastPts}. Break ${k.brk}.` : nPot ? "Ball potted." : "Practice table.");
+    updateHUD(); return;
+  }
+  if (g.winner >= 0) {
+    S.phase = "over";
+    const sc = `${k.score[g.winner]}–${k.score[1 - g.winner]}`;
+    setMsg(`${vb(g.winner, "wins", "win")} the frame ${sc}!`, "win");
+    $("overTitle").textContent = `${vb(g.winner, "wins", "win")} the frame`;
+    $("overText").textContent = (k.ref && k.ref.forfeit ? `Frame forfeited by ${name(1 - g.winner)} after three misses with a clear sight of a ball on. ` : "") + `Final score ${k.score[0]}–${k.score[1]}. High breaks: ${name(0)} ${k.high[0]}, ${name(1)} ${k.high[1]}.`;
+    updateHUD();
+    setTimeout(() => { $("over").hidden = false; }, 900);
+    return;
+  }
+  S.phase = "aim";
+  let msg, cls = "";
+  if (g.foul) { msg = `Foul (${SFOULS[g.foul]}): ${k.foulPts} points to ${name(g.turn)}.`; cls = "foul"; }
+  else if (k.lastPts) msg = `${name(shooter)} +${k.lastPts}. Break ${k.brk}.`;
+  else msg = playerName(g.turn) === "You" ? "Your shot." : `${name(g.turn)} to play.`;
+  if (g.foul && k.pending) { handleChoice(msg); return; }
+  setMsg(msg, cls);
+  updateHUD();
+  if (isBot(g.turn)) setTimeout(maybeBotTurn, S.mode === "watch" ? 700 : 500);
+}
+
+// ------------------------------------------------------------------ main loop
+function frame() {
+  const dt = Math.min(0.05, clock.getDelta());
+  if (S.charging && S.chargeSrc === "key") {
+    S.chargeT += dt;
+    const ph = (S.chargeT / 1.6) % 2; S.power = ph < 1 ? ph : 2 - ph;
+    updatePowerUI();
+  }
+  if (S.phase === "stroke" && stroke) {
+    stroke.t += dt;
+    const u = Math.min(1, stroke.t / stroke.dur);
+    if (!stroke.shot) {
+      const gap = stroke.pull * (1 - u * u);
+      placeCue(gap, 1);
+      if (u >= 1) { stroke.shot = true; stroke.t = 0; fireShot(); }
+    }
+  } else if (stroke && stroke.shot) {
+    stroke.t += dt;
+    const u = Math.min(1, stroke.t / 0.35);
+    const ft = Math.min(1, stroke.t / 0.12);
+    placeCueFrozen(-0.06 * ft * (0.4 + S.power), 1 - u);
+    if (u >= 1) stroke = null;
+  }
+  if (S.phase === "moving") {
+    const moving = E.advance(dt * (S.ff ? 4 : 1));
+    playSounds();
+    readState();
+    if (!moving) finishShot();
+  }
+  if (S.phase === "botaim" && S.botMove) {
+    const m = S.botMove; m.t += dt;
+    const u = Math.min(1, m.t / 0.9), e = u * u * (3 - 2 * u);
+    S.phi = m.from + (m.to - m.from) * e;
+    placeCue(0.03 + Math.min(1, Math.max(0, (m.t - 0.9) / 0.5)) * (0.03 + 0.26 * S.power), 1);
+    if (m.t > 1.5) { S.phi = m.d.phi; S.botShot = m.d; S.botMove = null; startStroke(); }
+  }
+  if (S.phase === "aim") {
+    const showCue = S.balls[0].on && !(S.game.ballInHand && S.dragging === "cue");
+    if (showCue) {
+      const gap = S.charging ? 0.03 + 0.26 * S.power : 0.03 + Math.sin(performance.now() * 0.002) * 0.002;
+      placeCue(gap, 1);
+    } else cue.visible = false;
+  } else if (S.phase !== "stroke" && S.phase !== "botaim" && !stroke) cue.visible = false;
+  updateBallMeshes(dt);
+  updateGuides();
+  if (S.fbRing) {
+    const k = S.snk;
+    const id = S.type === 1 && k && S.phase !== "moving" ? (k.freeBall && k.freeNom > 0 ? k.freeNom : (k.phase === 1 && k.nominated > 0 ? k.nominated : -1)) : -1;
+    const on = id > 0 && S.balls[id] && S.balls[id].on;
+    S.fbRing.visible = !!on;
+    if (on) { S.fbRing.material.color.set(k.freeBall ? "#e8c46a" : "#9cc4ea"); const b = S.balls[id]; S.fbRing.position.copy(E2T(b.x, b.y, 0.0015)); S.fbRing.material.opacity = 0.65 + 0.3 * Math.sin(performance.now() * 0.006); }
+  }
+  const rep = $("report");
+  if (S.cam === "2d") { const pr = $("powerWrap").getBoundingClientRect(); rep.style.top = (pr.bottom + 10) + "px"; rep.style.bottom = "auto"; }
+  else if (rep.style.top) { rep.style.top = ""; rep.style.bottom = ""; }
+  updateCamera(dt, false);
+  renderer.render(scene, activeCam());
+  requestAnimationFrame(frame);
+}
+// keep the cue where it struck (the cue ball has already left)
+let frozenCue = null;
+function placeCueFrozen(extra, opacity) {
+  if (!frozenCue) frozenCue = { pos: cue.position.clone(), q: cue.quaternion.clone() };
+  const back = new THREE.Vector3(0, 0, 1).applyQuaternion(frozenCue.q);
+  cue.position.copy(frozenCue.pos).add(back.multiplyScalar(extra));
+  for (const m of cueMats) m.opacity = opacity;
+  cue.visible = opacity > 0.01;
+  if (opacity <= 0.01) frozenCue = null;
+}
+
+(async function main() {
+  await loadEngine();
+  E.newGame(20261024, 0, 0);
+  readState();
+  buildScene();
+  setupInput();
+  for (const b of S.balls) b.wasOn = b.on;
+  updateHUD(); updatePowerUI(); drawSpin();
+  S.cam = "orbit"; updateCamera(0, true);
+  let ef = 400; try { ef = +localStorage.getItem("feltchalk.effort") || 400; } catch (e) {}
+  setEffort(ef);
+  let saved = "cue"; try { saved = localStorage.getItem("feltchalk.view") || "cue"; } catch (e) {}
+  setCam(CAM_ORDER.includes(saved) ? saved : "cue");
+  $("loading").hidden = true;
+  requestAnimationFrame(frame);
+})();
+</script>
