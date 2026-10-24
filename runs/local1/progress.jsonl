@@ -1,0 +1,2 @@
+{"iter":1,"kind":"8noisy","accepted":0,"arena":{"a":63,"b":67,"games":130,"score":0.485,"elo":-11,"elo_ci":60,"llr":-0.83,"verdict":"undecided"}}
+{"iter":1,"kind":"snk","accepted":0,"arena":{"a":14,"b":11,"games":25,"score":0.560,"elo":42,"elo_ci":146,"llr":0.17,"verdict":"undecided"}}
