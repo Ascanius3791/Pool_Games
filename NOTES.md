@@ -48,6 +48,12 @@
   - Humans nominate by right-click, or automatically when the choice is obvious: nomGuess plays the stroke 120 times with 3x the profile's slips (partial sims until first contact). If every run meets the same colour first, it is nominated automatically. If the runs differ, the shot is stored and a panel asks which colour (buttons show the counts; clicking nominates and plays the stored shot). If every run hits a red or nothing, the shot goes ahead (a foul either way).
   - Settings: 'Colours must be nominated' and 'Nominate obvious colours for me' (both on by default).
 
+- v8 (2026-10-24):
+  - Unclear nomination: the stroke is locked. No counts are shown and it cannot be cancelled; nominating a colour (button or right-click) plays it at once.
+  - Training pipeline prepared (git repo, local commit b3adf47; bundle and tarball delivered to Paul). See README.md and TRAINING.md. Tools: train/selfplay, abstract_snk, tune, arena, run_pipeline.sh, export.py; baseline in train/baseline.
+  - Snooker win-table evaluator (SnkEval) in bot.h. The game uses it only once the arena accepts it (SNK_USE_TABLE in train/out/snk_eval.h).
+  - Smoke test (make smoke, about 3 min) passes end to end.
+
 ## Strategy gaps and training plan (discussed 2026-10-24)
 - The bot looks one shot ahead plus a static evaluation, so it has no multi-visit planning.
 - The snooker value is linear in points (points this shot ± expected next visit). It ignores score context, so it does not play for snookers when it needs them and does not tighten up when far ahead. The 'snookered' term is a flat -3.
