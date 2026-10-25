@@ -84,6 +84,8 @@ jobs:
           git config user.name "training-bot"
           git config user.email "training-bot@users.noreply.github.com"
           git checkout -b training/${{ github.run_number }}
-          git add -f train/baseline train/out web/index.html runs/gh_${{ github.run_number }}/REPORT.md runs/gh_${{ github.run_number }}/progress.jsonl
+          for f in train/baseline train/out web/index.html runs/gh_${{ github.run_number }}/REPORT.md runs/gh_${{ github.run_number }}/progress.jsonl; do
+            [ -e "$f" ] && git add -f "$f"
+          done
           git commit -m "Training run ${{ github.run_number }}: $(grep -c accepted\":1 runs/gh_${{ github.run_number }}/progress.jsonl || true) candidates accepted"
           git push origin training/${{ github.run_number }}

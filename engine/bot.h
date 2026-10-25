@@ -716,7 +716,7 @@ inline real valueAfterWin(BotCtx& c, const GameSnk& before, GameSnk& a, const Sh
         if (m) {
             GameSnk r = before; r.score[0] = a.score[0]; r.score[1] = a.score[1];
             pOpp = pmax(pOpp, 1 - snkWinNow(ev, r, r.ballInHand));
-            if (c.rootW >= 0) pOpp = pmax(pOpp, 1 - (c.rootW - snkMissFee(before)));
+            if (c.rootW >= 0) pOpp = pmax(pOpp, 1 - pmax(0, c.rootW - snkMissFee(before)));   // a win chance: never below 0
         }
         return 1 - pOpp;
     }
@@ -1105,7 +1105,7 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
             if (best < 0 || !c.foulGuard || !snkDeliberateFoul(c, g, L.c[best])) break;
             L.c[best].done = 2;
         }
-    if (best >= 0 && c.foulGuard) { const real cap = L.c[best].val - missFee(g); for (int i = 0; i < L.n; ++i) if (L.c[i].done == 2 && L.c[i].val > cap) L.c[i].val = cap; }
+    if (best >= 0 && c.foulGuard) { const real cap = c.snk && c.snk->table ? pmax(0, L.c[best].val - missFee(g)) : L.c[best].val - missFee(g); for (int i = 0; i < L.n; ++i) if (L.c[i].done == 2 && L.c[i].val > cap) L.c[i].val = cap; }
     if (best < 0) { best = 0; for (int i = 1; i < L.n; ++i) if (L.c[i].val > L.c[best].val) best = i; }
     const Cand& b = L.c[best];
     d.place = b.place; d.px = b.px; d.py = b.py; d.sp = b.sp; d.value = b.val; d.tgt = b.tgt; d.kind = b.kind; d.pk = b.pk;

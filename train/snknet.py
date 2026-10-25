@@ -130,14 +130,27 @@ def main():
     for di, pre in enumerate(a.data):
         meta = np.fromfile(pre + '.meta', dtype='<f4').reshape(-1, NMETA)
         x = np.memmap(pre + '.x', dtype='<f2', mode='r', shape=(len(meta), NX))
+        # frames with a search value or target outside [0, 1] (or NaN) are dropped, loudly
+        badrow = ~((meta[:, 9] >= 0) & (meta[:, 9] <= 1))
         y = td_targets(meta, a.lam)
+        badrow |= ~((y >= 0) & (y <= 1))
+        if badrow.any():
+            badf = np.unique(meta[badrow, 12])
+            keep = ~np.isin(meta[:, 12], badf)
+            v = meta[badrow, 9]
+            print('WARNING %s: %d rows out of range (values %s .. %s, targets %s .. %s, results %s), dropping %d frames / %d rows'
+                  % (pre, badrow.sum(), np.nanmin(v) if np.isfinite(v).any() else 'nan', np.nanmax(v) if np.isfinite(v).any() else 'nan',
+                     np.nanmin(y[badrow]), np.nanmax(y[badrow]), np.unique(meta[badrow, 10])[:5], len(badf), (~keep).sum()), flush=True)
+        else:
+            keep = np.ones(len(meta), bool)
         fam = np.full(len(meta), 255, dtype=np.uint8)
         if os.path.exists(pre + '.fam') and os.path.getsize(pre + '.fam') == len(meta):
             fam = np.fromfile(pre + '.fam', dtype=np.uint8)
         fid = meta[:, 12].astype(np.int64)
         salt = zlib.crc32(os.path.basename(pre).encode())    # stable split when shards are added
         isval = ((fid * 2654435761 + salt) % 1000) < 100
-        sets.append(dict(x=x, meta=meta, y=y, val=isval, fam=fam))
+        isval &= keep
+        sets.append(dict(x=x, meta=meta, y=y, val=isval, fam=fam, keep=keep))
         print('%s: %d positions, %d frames, %d validation positions' % (pre, len(meta), fid.max() + 1, isval.sum()), flush=True)
 
     lin = [float(v) for v in open(a.params).read().split()]
@@ -184,7 +197,7 @@ def main():
             X, F, Y = [], [], []
             for cj in order[ci:ci + 2]:
                 si, s0 = chunks[cj]; S = sets[si]; s1 = min(s0 + a.chunk, len(S['meta']))
-                m = ~S['val'][s0:s1]
+                m = ~S['val'][s0:s1] & S['keep'][s0:s1]
                 X.append(np.asarray(S['x'][s0:s1])[m]); F.append(S['meta'][s0:s1][m]); Y.append(S['y'][s0:s1][m])
             X = np.concatenate(X)                      # float16; converted per batch (memory)
             F = torch.from_numpy(np.concatenate(F)); Y = torch.from_numpy(np.concatenate(Y))

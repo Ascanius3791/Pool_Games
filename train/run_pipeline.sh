@@ -107,7 +107,8 @@ while [ $(( $(date +%s) + need )) -lt "$deadline" ]; do
     init=(); [ -f "$BEST/snk_net.bin" ] && init=(--init "$BEST/snk_net.bin")
     python3 train/snknet.py --data $(ls "$FEAT"/*.meta | sed 's/\.meta$//') "${init[@]}" --params "$BEST/snk_params.txt" --table "$BEST/snk_table.bin" \
       --lambda "$LAMBDA" --epochs "$NET_EPOCHS" --threads "$CORES" --seed "$iter" --out "$IT/cand/snk_net.bin" > "$IT/tune_snknet.log" 2>&1 \
-      || { log "iteration $iter: net training failed (see $IT/tune_snknet.log)"; rm -f "$IT/cand/snk_net.bin"; }
+      || { log "iteration $iter: net training failed (see $IT/tune_snknet.log)"; rm -f "$IT/cand/snk_net.bin"
+           echo "- **net training failed** in iteration $iter: \`$(tail -1 "$IT/tune_snknet.log")\`" >> "$RUN/REPORT.md"; }
   fi
 
   # arena: candidate (A) vs current best (B)
