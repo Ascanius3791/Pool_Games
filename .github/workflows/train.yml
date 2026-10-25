@@ -26,6 +26,9 @@ on:
       net_epochs:
         description: "Net training passes over all positions per iteration"
         default: "3"
+      fresh_data:
+        description: "Start without the cached self-play data (1 = yes; use after changes to the rules or the bot's play)"
+        default: "0"
 permissions:
   contents: write
 jobs:
@@ -43,6 +46,7 @@ jobs:
         if: github.event.inputs.net == '1'
         run: pip install numpy torch --index-url https://download.pytorch.org/whl/cpu
       - name: Restore self-play data
+        if: github.event.inputs.fresh_data != '1'
         uses: actions/cache/restore@v4
         with:
           path: data
