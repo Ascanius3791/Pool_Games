@@ -107,6 +107,8 @@
   - Pause (P) and Resign buttons on the page. Resign (two clicks): the human in bot games, the player to move in two-player games; engine export resign(p) sets the winner; the record gets the note and Result "X wins, Y resigned at a-b". Bot concession (menu option "Bots concede hopeless games", default on, page only): own win estimate < 10% on two of its decisions in a row -> concedes to a bot, offers once per frame to a human (Accept / Play on). Native self-play and the arena never resign. Test: tests/ui_replay.sh resign.
   - Perfect bot (no human error): frames differ by seed (rack jitter of 15 um plus the search's random safeties and placements); the same seed reproduces a frame exactly. Typical frame: a few safeties, then one visit clears 110-135.
 
+- Cloud run 2 (2026-10-25, fresh data): net training failed in all 10 iterations ("target not in [0, 1]"), so no arena; only self-play data (~296 MB, kept in the cache). Cause: 31 of 200k recorded values were negative (down to -0.10): a far-behind player fouling into a miss, foul cap rootW - fee with rootW below the fee (scores like 4-113, the fee growing with each miss). Fixed in 502b9fc (cap floored at 0; snknet.py drops bad frames loudly). Run 3 continues from run 2's data.
+
 ## Next steps (for the next session)
 1. Start "Train bots" (defaults now include NET=1): the cloud continues from the net in train/baseline, its self-play uses the net. Read runs/gh_<n>/REPORT.md on branch training/<n>, merge if good.
 2. Possibly: equal-time comparison (the net costs ~1.5x per decision); a larger net if the arena keeps accepting; policy prior; two-shot lookahead for safeties.
