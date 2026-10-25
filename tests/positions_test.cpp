@@ -8,7 +8,7 @@
 //       (and the foul choice) must again be consistent. Prints per-family statistics.
 //       Exit code 1 on any failure.
 //   build/positions_test --demo FAMILY [--n 12] [--budget 2000] [--skill 1] [--samples 16]
-//                        [--escapes N] [--verbose 1]  (evaluators: train/baseline net vs the linear evaluator
+//                        [--verbose 1]  (evaluators: train/baseline net vs the linear evaluator
 //                        train/baseline/snk_params.txt + win table, as in the arena)
 //       first decision of each evaluator on N positions of FAMILY: shot kind, value, and over
 //       `samples` noisy executions how often the shot pots, fouls, or leaves the opponent
@@ -74,7 +74,7 @@ static int demo(const Args& a) {
         if (verbose && snookered) printf("   referee's best escape (direct / 1 / 2 cushions) hits a ball on with p* = %.2f\n", pStar);
         for (int e = 0; e < 2; ++e) {
             const SnkEval* ev = e == 0 ? &net.ev : &lin.ev;
-            BotCtx c; botDefaults(c, true, 0, 1000 + i); c.budget = budget; c.nm = nm; c.snk = ev; c.nEscape = (int)a.num("--escapes", 0);
+            BotCtx c; botDefaults(c, true, 0, 1000 + i); c.budget = budget; c.nm = nm; c.snk = ev;
             BotDecision d; botThink(c, g, d);
             int lay = 0, foul = 0, pot = 0;
             if (snookered) sumHit[e] += snkHitChance(g, d.sp, nm, 555 + i, 24);
@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
                 BotCtx c; botDefaults(c, true, 0, seed + i); c.budget = 150; c.nm = nm; c.snk = ev;
                 BotDecision d; botThink(c, g, d);
                 GameSnk b = playOnce(g, d, nm, seed * 31 + i);
-                if (b.pendingChoice && b.winner < 0) { real v[3]; GameSnk pre = g; if (d.place) resetBall(pre.sim.b[0], d.px, d.py); snkApplyChoice(b, pre, snkBotChoose(b, -1, v)); }
+                if (b.pendingChoice && b.winner < 0) { GameSnk pre = g; if (d.place) resetBall(pre.sim.b[0], d.px, d.py); snkApplyChoice(b, pre, CH_PLAY); }   // play on (the option logic is tested elsewhere)
                 std::string w2 = b.winner >= 0 ? std::string() : snkCheck(b, true);
                 if (w2.empty() && b.winner < 0 && !finiteInputs(b, ev, w2)) {}
                 if (!w2.empty()) { if (bad < 20) printf("  %s #%d after one shot: %s\n", famName(fam), i, w2.c_str()); bad++; }

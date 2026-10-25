@@ -3,7 +3,7 @@
 // usage: selfplay --game 8|snk --out DIR --minutes M --seed S
 //                 [--noisy 1] [--skill 1.0] [--budget 250] [--random-start 0.5]
 //                 [--start-mix "break:4 snookers:1 ..."] [--pos-from DIR[,DIR...]] [--pool 20000]
-//                 [--escapes N] [--weights8 FILE] [--snk-params FILE] [--snk-table FILE] [--snk-net FILE]
+//                 [--weights8 FILE] [--snk-params FILE] [--snk-table FILE] [--snk-net FILE]
 // Snooker starting positions: --start-mix draws every frame's start from the families in
 // train/positions.h with the given weights (it replaces --random-start, which keeps the old
 // behaviour: break-off, or randomStartSnk with that probability). The 'perturbed' family takes
@@ -31,7 +31,6 @@ int main(int argc, char** argv) {
     const double skill = a.num("--skill", 1.0);
     const double budget = a.num("--budget", 250);
     const double randomStart = a.num("--random-start", 0.5);
-    const int escapes = (int)a.num("--escapes", 0);   // snooker: cushion escape candidates when snookered (bot.h addEscapeCands)
     FamMix mix; bool useMix = false;
     if (a.has("--start-mix")) {
         std::string err;
@@ -99,7 +98,7 @@ int main(int argc, char** argv) {
             raw.clear();
             bool visitStart = true; int lastTurn = g.turn;
             while (g.winner < 0 && shots < cap) {
-                BotCtx c; botDefaults(c, noisy, 0, gseed * 31 + shots); c.budget = budget; c.nm = nm; c.snk = &se.ev; c.nEscape = escapes;
+                BotCtx c; botDefaults(c, noisy, 0, gseed * 31 + shots); c.budget = budget; c.nm = nm; c.snk = &se.ev;
                 Pos p; p.mover = g.turn;
                 real f[SNK_NF]; snkFeatures(g, g.ballInHand, f); p.f.assign(f, f + SNK_NF);
                 BotDecision d; botThink(c, g, d);

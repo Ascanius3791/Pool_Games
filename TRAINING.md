@@ -97,7 +97,6 @@ HOURS=8 ./train/run_pipeline.sh                # the real run
 | `SP_MIX` | `break:4 random:1 snookers:1 lead:0.5 snookered:1 freeball:0.5 safety:1 clearance:1 black:0.5 perturbed:1` | snooker self-play starting positions (family:weight); empty = the old 50% break / 50% random |
 | `ARENA_SUITE` | `break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:1 perturbed:1` | starting positions of the snooker arena pairs; empty = every pair from the break |
 | `POS_FROM` | `data/snk` | where the `perturbed` family takes its real positions from (`*.posrec`, a sample of 20k) |
-| `ESCAPES` | 0 | snooker bot: number of cushion-escape families tried when snookered (`BotCtx.nEscape`, `engine/bot.h addEscapeCands`); 0 = off, as in the game |
 
 Throughput since the event-driven engine (v9/v10, about 20–25× faster simulation): snooker about 60–70 frames/min per core at budget 2000 with human error (about 3,500 positions/min, half of the frames start mid-frame). One 25-minute self-play phase on 4 cores gives about 6,000 frames / 350k positions; a 5-hour run about 2–3 million positions. Disk: about 100 bytes per position (raw records) plus about 40 for the tuning records.
 
@@ -160,8 +159,6 @@ train/bin/arena --game snk ... --suite "break:2 snookers:1 lead:1 ..." [--pos-fr
 build/positions_test [--n 2000 --shots 150 --pos-from data/snk]          # validity
 build/positions_test --demo snookers --n 12 --budget 2000                # first decisions, net vs linear
 ```
-
-**Escapes.** The bot's safety candidates aim straight at a ball on, so a snookered bot almost never found an escape: on 30 `snookered` positions (club skill, budget 2000) its chosen shot hit a ball on 17% of the time, while the referee's best one/two-cushion escape would have hit 80%. `BotCtx.nEscape > 0` adds escape candidates (mirror images of the nearest balls on over one and two cushions, the widest hitting windows, three powers each, then refined by the pattern search); it is off by default (the game is unchanged) and switched on with `selfplay --escapes N`, `arena --a-escapes N --b-escapes N`, `ESCAPES=N` in the pipeline, or `positions_test --demo snookered --escapes 4` (hit rate 77%, fouls 83% -> 24%).
 
 A spec is `family:weight` separated by spaces or commas (a bare name = 1, `all` = every family). Self-play draws each frame's family at random by weight; the arena interleaves them deterministically (smooth weighted round robin), so a short arena still covers every family and both candidates see the same positions. Only frames from `break` and `random` write shot statistics (`*.stats`), so the abstract simulator stays calibrated on natural play. The `.games` tuning records and the raw positions include every family.
 

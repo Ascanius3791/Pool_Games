@@ -35,7 +35,6 @@ FEAT=${FEAT:-feat}             # feature cache for the net (rebuilt from data/ w
 SP_MIX=${SP_MIX-"break:4 random:1 snookers:1 lead:0.5 snookered:1 freeball:0.5 safety:1 clearance:1 black:0.5 perturbed:1"}
 ARENA_SUITE=${ARENA_SUITE-"break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:1 perturbed:1"}
 POS_FROM=${POS_FROM:-data/snk}  # real positions for the 'perturbed' family (a sample of them)
-ESCAPES=${ESCAPES:-0}          # snooker bot: cushion escape candidates when snookered (engine/bot.h addEscapeCands; 0 = off as in the game)
 
 mkdir -p "$RUN/best" data/8std data/8noisy data/snk "$FEAT"
 if [ -n "${BEST_FROM:-}" ]; then cp "$BEST_FROM"/* "$RUN/best/"; else cp train/baseline/* "$RUN/best/"; fi
@@ -72,7 +71,6 @@ launch_selfplay() {
               mkdir -p "$out"
               cmd=(train/bin/selfplay --game snk --noisy $nz --snk-params "$BEST/snk_params.txt" --snk-table "$BEST/snk_table.bin" --out "$out")
               [ "$(cat "$BEST/snk_use_net" 2>/dev/null)" = "1" ] && cmd+=(--snk-net "$BEST/snk_net.bin")
-              cmd+=(--escapes "$ESCAPES")
               if [ -n "$SP_MIX" ]; then cmd+=(--start-mix "$SP_MIX" --pos-from "$POS_FROM"); else cmd+=(--random-start 0.5); fi ;;
     esac
     "${cmd[@]}" --minutes "$minutes" --seed "$seed" --budget "$BUDGET" --skill "$sk" > "$dir/selfplay_${g}_s${sk}_$c.log" 2>&1 &
@@ -124,7 +122,7 @@ while [ $(( $(date +%s) + need )) -lt "$deadline" ]; do
   # current best snooker evaluator (B side): net, win table + linear E, or the legacy points evaluation
   if [ "$(cat "$BEST/snk_use_table" 2>/dev/null)" = "1" ]; then bp="$BEST/snk_params.txt"; bt="$BEST/snk_table.bin"; else bp=none; bt=none; fi
   bn=none; [ "$(cat "$BEST/snk_use_net" 2>/dev/null)" = "1" ] && bn="$BEST/snk_net.bin"
-  suite=(--a-escapes "$ESCAPES" --b-escapes "$ESCAPES"); [ -n "$ARENA_SUITE" ] && suite+=(--suite "$ARENA_SUITE" --pos-from "$POS_FROM")
+  suite=(); [ -n "$ARENA_SUITE" ] && suite=(--suite "$ARENA_SUITE" --pos-from "$POS_FROM")
   if [ -f "$IT/cand/snk_net.bin" ]; then
     train/bin/arena --game snk --noisy 1 --skill "$SKILL" --minutes "$ARENA_MIN" --budget "$BUDGET" --seed $((iter * 7 + 4)) --a-snk-params "$BEST/snk_params.txt" --a-snk-table "$BEST/snk_table.bin" --a-snk-net "$IT/cand/snk_net.bin" --b-snk-params "$bp" --b-snk-table "$bt" --b-snk-net "$bn" "${suite[@]}" > "$IT/arena_snknet.log" 2>&1 & apids+=($!)
   fi
