@@ -49,6 +49,9 @@ struct EvEngine {
     int n;
     EvBall e[MAXB];
     real tp[MAXB][MAXB];                 // tp[i][j] (i < j): next contact time of the pair
+    unsigned live[MAXB];                 // bit j of live[i]: the pair (i, j) has a finite tp
+    // contiguous copies of each ball's phase end, bounding box and phase (fast scans)
+    real qte[MAXB], qx0[MAXB], qx1[MAXB], qy0[MAXB], qy1[MAXB]; int qph[MAXB];
     real rowMin[MAXB]; int rowArg[MAXB];   // min over j > i of tp[i][j] (first such j)
     real tc[MAXB]; int ck[MAXB], ci[MAXB]; // next table event of ball i: time, kind, index
     real now;
@@ -316,24 +319,19 @@ inline void evRowScan(EvEngine& E, int i) {
 inline void evSetTp(EvEngine& E, int i, int j, real v) {   // i < j
     real old = E.tp[i][j];
     E.tp[i][j] = v;
+    if (v < EV_INF) { E.live[i] |= 1u << j; E.live[j] |= 1u << i; }
+    else { E.live[i] &= ~(1u << j); E.live[j] &= ~(1u << i); }
     if (v < E.rowMin[i] || (v == E.rowMin[i] && v < EV_INF && j < E.rowArg[i])) { E.rowMin[i] = v; E.rowArg[i] = j; }
     else if (E.rowArg[i] == j && v != old) evRowScan(E, i);
 }
-inline real evPairTime(const EvEngine& E, const Params& P, int i, int j);
-inline void evPredPair(EvEngine& E, const Params& P, int i, int j) {
-    if (i > j) { int t = i; i = j; j = t; }
-    evSetTp(E, i, j, evPairTime(E, P, i, j));
-}
-inline real evPairTime(const EvEngine& E, const Params& P, int i, int j) {
-    const EvBall& A = E.e[i]; const EvBall& B = E.e[j];
-    if (A.ph < 0 || B.ph < 0 || (A.ph == 0 && B.ph == 0)) return EV_INF;
+// Next contact time of balls i < j (A = ball i, B = ball j) that passed the cheap rejection
+// test in evRepredict; a* and b* are their positions and velocities at E.now.
+inline real evPairTime(const EvEngine& E, const Params& P, const EvBall& A, const EvBall& B,
+                       real ax, real ay, real avx, real avy, real bx, real by, real bvx, real bvy) {
     const real r = 2 * P.R;
-    if (A.bx0 > B.bx1 + r || B.bx0 > A.bx1 + r || A.by0 > B.by1 + r || B.by0 > A.by1 + r) return EV_INF;
     const real t0 = E.now, t1 = pmin(A.te, B.te);
     const real S = t1 - t0;
     if (!(S >= 0)) return EV_INF;
-    real ax, ay, avx, avy, bx, by, bvx, bvy;
-    evPV(A, t0, ax, ay, avx, avy); evPV(B, t0, bx, by, bvx, bvy);
     const real Dx = bx - ax, Dy = by - ay, Vx = bvx - avx, Vy = bvy - avy;
     const real Ax = (B.ph > 0 ? B.ax : 0) - (A.ph > 0 ? A.ax : 0), Ay = (B.ph > 0 ? B.ay : 0) - (A.ph > 0 ? A.ay : 0);
     // relative path is a quadratic Bezier: D0, D0 + V S/2, D(S)
@@ -409,21 +407,43 @@ inline void evPredTable(EvEngine& E, const Sim& sim, int i) {
     E.tc[i] = best; E.ck[i] = kind; E.ci[i] = idx;
 }
 
+// copy ball i's phase end, box and phase into the contiguous arrays
+inline void evSync(EvEngine& E, int i) {
+    const EvBall& b = E.e[i];
+    E.qte[i] = b.te; E.qx0[i] = b.bx0; E.qx1[i] = b.bx1; E.qy0[i] = b.by0; E.qy1[i] = b.by1; E.qph[i] = b.ph;
+}
 inline void evRepredict(EvEngine& E, const Sim& s, int i) {
     const EvBall& A = E.e[i];
     const real r = 2 * s.P.R;
-    for (int j = 0; j < E.n; ++j) {
-        if (j == i) continue;
-        const int lo = i < j ? i : j, hi = i < j ? j : i;
-        const EvBall& B = E.e[j];
-        // cheap rejection (same tests evPairTime starts with): skip the call when the pair
-        // cannot meet and has no stored prediction anyway
-        if (A.ph < 0 || B.ph < 0 || (A.ph == 0 && B.ph == 0) ||
-            A.bx0 > B.bx1 + r || B.bx0 > A.bx1 + r || A.by0 > B.by1 + r || B.by0 > A.by1 + r) {
-            if (E.tp[lo][hi] < EV_INF) evSetTp(E, lo, hi, EV_INF);
-            continue;
+    const int n = E.n;
+    // cheap rejection, branch-free over all balls: off the table, both at rest, or bounding
+    // boxes (whole phases) farther apart than 2R. Rejected pairs only need their stored
+    // prediction cleared.
+    unsigned cand = 0;
+    if (A.ph >= 0) {
+        const real x0 = A.bx0 - r, x1 = A.bx1 + r, y0 = A.by0 - r, y1 = A.by1 + r;
+        const int still = A.ph == 0;
+        for (int j = 0; j < n; ++j) {
+            const int ok = (E.qph[j] > 0) | ((E.qph[j] == 0) & !still);
+            const int near = (E.qx0[j] <= x1) & (E.qx1[j] >= x0) & (E.qy0[j] <= y1) & (E.qy1[j] >= y0);
+            cand |= (unsigned)(ok & near) << j;
         }
-        evSetTp(E, lo, hi, evPairTime(E, s.P, lo, hi));
+        cand &= ~(1u << i);
+    }
+    for (unsigned m = E.live[i] & ~cand; m; m &= m - 1) {
+        const int j = __builtin_ctz(m);
+        evSetTp(E, i < j ? i : j, i < j ? j : i, EV_INF);
+    }
+    if (cand) {
+        real ax, ay, avx, avy; evPV(A, E.now, ax, ay, avx, avy);
+        for (unsigned m = cand; m; m &= m - 1) {
+            const int j = __builtin_ctz(m);
+            const EvBall& B = E.e[j];
+            real bx, by, bvx, bvy; evPV(B, E.now, bx, by, bvx, bvy);
+            const real t = i < j ? evPairTime(E, s.P, A, B, ax, ay, avx, avy, bx, by, bvx, bvy)
+                                 : evPairTime(E, s.P, B, A, bx, by, bvx, bvy, ax, ay, avx, avy);
+            evSetTp(E, i < j ? i : j, i < j ? j : i, t);
+        }
     }
     evPredTable(E, s, i);
 }
@@ -431,12 +451,12 @@ inline void evRepredict(EvEngine& E, const Sim& s, int i) {
 // ------------------------------------------------------------------ engine
 inline void evInit(EvEngine& E, const Sim& s) {
     E.n = s.n; E.now = s.t; E.nEv = 0; E.capped = 0; E.nBadEscape = 0; E.tDisp = s.t; E.nLog = 0;
-    for (int i = 0; i < s.n; ++i) evLoad(E.e[i], s.b[i], s.P, s.t);
+    for (int i = 0; i < s.n; ++i) { evLoad(E.e[i], s.b[i], s.P, s.t); evSync(E, i); }
     // pairs of two resting balls can never meet: start from "no event" and predict only
     // around the moving balls (usually just the cue ball)
     for (int i = 0; i < s.n; ++i) {
         for (int j = i + 1; j < s.n; ++j) E.tp[i][j] = EV_INF;
-        E.rowMin[i] = EV_INF; E.rowArg[i] = -1; E.tc[i] = EV_INF; E.ck[i] = 0; E.ci[i] = -1;
+        E.rowMin[i] = EV_INF; E.rowArg[i] = -1; E.tc[i] = EV_INF; E.ck[i] = 0; E.ci[i] = -1; E.live[i] = 0;
     }
     for (int i = 0; i < s.n; ++i) if (E.e[i].ph > 0) evRepredict(E, s, i);
 }
@@ -497,24 +517,24 @@ inline int evRun(EvEngine& E, Sim& s, real tStop, int untilFirstHit) {
     const int n = s.n;
     for (;;) {
         // earliest event; ties: phase changes before table events before pairs, lower index first
-        real t1 = EV_INF, t2 = EV_INF, t3 = EV_INF; int a1 = -1, a2 = -1, a3 = -1;
-        for (int i = 0; i < n; ++i) {
-            if (E.e[i].te < t1) { t1 = E.e[i].te; a1 = i; }     // te = EV_INF unless moving
-            if (E.tc[i] < t2) { t2 = E.tc[i]; a2 = i; }
-            if (E.rowMin[i] < t3) { t3 = E.rowMin[i]; a3 = i; }
+        // (branch-free minimum first, then the first event at that time in the tie order)
+        real tm = EV_INF;
+        for (int i = 0; i < n; ++i) {                       // qte = EV_INF unless moving
+            const real u = pmin(E.qte[i], pmin(E.tc[i], E.rowMin[i]));
+            tm = u < tm ? u : tm;
         }
-        real tm = EV_INF; int type = EVT_NONE, a = -1, b = -1;
-        if (a1 >= 0) { tm = t1; type = EVT_PHASE; a = a1; }
-        if (a2 >= 0 && t2 < tm) { tm = t2; type = EVT_TABLE; a = a2; }
-        if (a3 >= 0 && t3 < tm) { tm = t3; type = EVT_PAIR; a = a3; b = E.rowArg[a3]; }
-        if (type == EVT_NONE || tm > tStop) break;
+        if (!(tm < EV_INF) || tm > tStop) break;
+        int type = EVT_NONE, a = -1, b = -1;
+        for (int i = 0; i < n && type == EVT_NONE; ++i) if (E.qte[i] == tm) { type = EVT_PHASE; a = i; }
+        for (int i = 0; i < n && type == EVT_NONE; ++i) if (E.tc[i] == tm) { type = EVT_TABLE; a = i; }
+        for (int i = 0; i < n && type == EVT_NONE; ++i) if (E.rowMin[i] == tm) { type = EVT_PAIR; a = i; b = E.rowArg[i]; }
         if (tm < E.now) tm = E.now;                         // never step back in time
         E.now = tm;
         if (++E.nEv > EV_MAXEV) {                           // safety: freeze everything
             E.capped = 1;
             evMaterialize(E, s, tm);
-            for (int i = 0; i < n; ++i) if (E.e[i].ph > 0) { s.b[i].vx = s.b[i].vy = s.b[i].wx = s.b[i].wy = 0; evLoad(E.e[i], s.b[i], P, tm); }
-            for (int i = 0; i < n; ++i) { E.tc[i] = EV_INF; for (int j = 0; j < n; ++j) E.tp[i][j] = EV_INF; E.rowMin[i] = EV_INF; E.rowArg[i] = -1; }
+            for (int i = 0; i < n; ++i) if (E.e[i].ph > 0) { s.b[i].vx = s.b[i].vy = s.b[i].wx = s.b[i].wy = 0; evLoad(E.e[i], s.b[i], P, tm); evSync(E, i); }
+            for (int i = 0; i < n; ++i) { E.tc[i] = EV_INF; for (int j = 0; j < n; ++j) E.tp[i][j] = EV_INF; E.rowMin[i] = EV_INF; E.rowArg[i] = -1; E.live[i] = 0; }
             continue;
         }
         if (type == EVT_PHASE) {
@@ -523,7 +543,7 @@ inline int evRun(EvEngine& E, Sim& s, real tStop, int untilFirstHit) {
             evAt(e, P, tm, B);
             if (e.ph == 1) { B.wx = -B.vy / P.R; B.wy = B.vx / P.R; }      // slip is exactly zero now
             else { B.vx = B.vy = B.wx = B.wy = 0; }                           // stopped
-            evLoad(e, B, P, tm);
+            evLoad(e, B, P, tm); evSync(E, a);
             evLog(E, EVT_PHASE, a, -1, e.ph);
             evRepredict(E, s, a);
         } else if (type == EVT_TABLE) {
@@ -541,7 +561,7 @@ inline int evRun(EvEngine& E, Sim& s, real tStop, int untilFirstHit) {
                     s.ev.railAny |= (1u << a); s.ev.nCushColl++;
                 }
                 evFixSepCush(B, nx, ny);
-                evLoad(E.e[a], B, P, tm);
+                evLoad(E.e[a], B, P, tm); evSync(E, a);
                 evLog(E, EVT_TABLE, a, kind, k);
                 evRepredict(E, s, a);
             } else {
@@ -556,9 +576,9 @@ inline int evRun(EvEngine& E, Sim& s, real tStop, int untilFirstHit) {
                     if (pabs((B.x - p.mx) * p.tx + (B.y - p.my) * p.ty) > p.halfw) E.nBadEscape++;
                 }
                 potBall(s, a, pk);
-                evLoad(E.e[a], B, P, tm);
+                evLoad(E.e[a], B, P, tm); evSync(E, a);
                 evLog(E, EVT_TABLE, a, kind, pk);
-                for (int j = 0; j < n; ++j) if (j != a) evSetTp(E, a < j ? a : j, a < j ? j : a, EV_INF);
+                for (unsigned m = E.live[a]; m; m &= m - 1) { const int j = __builtin_ctz(m); evSetTp(E, a < j ? a : j, a < j ? j : a, EV_INF); }
                 E.tc[a] = EV_INF;
             }
         } else {
@@ -571,7 +591,7 @@ inline int evRun(EvEngine& E, Sim& s, real tStop, int untilFirstHit) {
                 s.ev.touched |= (1u << a) | (1u << b); s.ev.nBallColl++;
             }
             evFixSepPair(A, B);
-            evLoad(E.e[a], A, P, tm); evLoad(E.e[b], B, P, tm);
+            evLoad(E.e[a], A, P, tm); evLoad(E.e[b], B, P, tm); evSync(E, a); evSync(E, b);
             evLog(E, EVT_PAIR, a, b, 0);
             evRepredict(E, s, a); evRepredict(E, s, b);
             if (untilFirstHit && s.ev.firstHit >= 0) {
