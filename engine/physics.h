@@ -72,13 +72,14 @@ struct Pocket {
 };
 struct Table {
     real L, W;               // playing area (cushion nose to cushion nose)
-    int nseg; Seg seg[48];
-    int npt; real ptx[64], pty[64], ptr[64];   // jaw noses: circles (radius 0 = sharp point)
+    int nseg; Seg seg[24];                      // 6 rails + 12 jaw facings
+    int npt; real ptx[16], pty[16], ptr[16];   // jaw noses: circles (radius 0 = sharp point), 12 used
     real safeX, safeY;                          // |x| < safeX && |y| < safeY: no cushion reachable
     int npk; Pocket pk[6];
 };
 
 inline void addSeg(Table& T, real ax, real ay, real bx, real by, real towardX, real towardY) {
+    if (T.nseg >= 24) return;
     Seg& s = T.seg[T.nseg++];
     s.ax = ax; s.ay = ay; s.bx = bx; s.by = by;
     real dx = bx - ax, dy = by - ay, l = psqrt(dx * dx + dy * dy);
@@ -87,7 +88,7 @@ inline void addSeg(Table& T, real ax, real ay, real bx, real by, real towardX, r
     // orient the normal toward the playable side (point toward*)
     if ((towardX - ax) * s.nx + (towardY - ay) * s.ny < 0) { s.nx = -s.nx; s.ny = -s.ny; }
 }
-inline void addPt(Table& T, real x, real y, real r) { T.ptx[T.npt] = x; T.pty[T.npt] = y; T.ptr[T.npt] = r; T.npt++; }
+inline void addPt(Table& T, real x, real y, real r) { if (T.npt >= 16) return; T.ptx[T.npt] = x; T.pty[T.npt] = y; T.ptr[T.npt] = r; T.npt++; }
 
 // Cushion nose outlines for rendering (filled by the builder)
 struct TableVis { int n; int cnt[6]; real x[6][48], y[6][48]; };

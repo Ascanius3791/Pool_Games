@@ -271,6 +271,42 @@ inline void evLoad(EvBall& e, const Ball& b, const Params& P, real t) {
     evBox(e);
 }
 
+// First entry of the path D + V s + A s^2 / 2 into the disc |x| <= r (relative motion of two
+// balls, or a ball against a jaw nose), s in [0, S]; -1 if none.
+// Most paths are straight (A parallel to V: rolling balls, straight stun/screw/follow, one ball
+// at rest), and then the entry is closed-form: the path length lambda(s) = |V| s + a s^2 / 2
+// reaches the disc at lambda* (a quadratic in lambda), then s from lambda(s) = lambda*.
+// Curved paths (sliding with sideways slip, two balls on different lines) use the quartic.
+inline real evDiscEntry(real Dx, real Dy, real Vx, real Vy, real Ax, real Ay, real S, real r) {
+    const real v2 = Vx * Vx + Vy * Vy, a2 = Ax * Ax + Ay * Ay;
+    const real cr = Vx * Ay - Vy * Ax;
+    if (v2 > 0 && cr * cr <= 1e-18 * v2 * a2) {
+        const real v = psqrt(v2), ux = Vx / v, uy = Vy / v;
+        const real a = Ax * ux + Ay * uy;                       // acceleration along the line
+        if (a >= 0 || v + a * S >= -1e-12 * v) {                // lambda(s) increasing on [0, S]
+            const real b = Dx * ux + Dy * uy, c = Dx * Dx + Dy * Dy - r * r;
+            if (c <= 0) return b < 0 ? 0 : -1;                  // overlapping: approaching or not
+            if (b >= 0) return -1;                              // moving away along the line
+            real disc = b * b - c;
+            if (disc < 0) return -1;                            // passes by
+            real lam = -b - psqrt(disc);                        // path length to contact (>= 0)
+            real lamMax = (v + 0.5 * a * S) * S;
+            if (lam > lamMax) return -1;
+            real rad = v2 + 2 * a * lam;
+            real sq = psqrt(rad > 0 ? rad : 0);
+            real t = 2 * lam / (v + sq);
+            return t <= S ? t : S;
+        }
+    }
+    real c[5];
+    c[4] = 0.25 * a2;
+    c[3] = Vx * Ax + Vy * Ay;
+    c[2] = v2 + Dx * Ax + Dy * Ay;
+    c[1] = 2 * (Dx * Vx + Dy * Vy);
+    c[0] = Dx * Dx + Dy * Dy - r * r;
+    return evFirstEntry(c, 4, S, EV_INF);
+}
+
 // ------------------------------------------------------------------ predictions
 inline void evRowScan(EvEngine& E, int i) {
     real m = EV_INF; int a = -1;
@@ -303,13 +339,7 @@ inline real evPairTime(const EvEngine& E, const Params& P, int i, int j) {
     // relative path is a quadratic Bezier: D0, D0 + V S/2, D(S)
     real x1 = Dx + (Vx + 0.5 * Ax * S) * S, y1 = Dy + (Vy + 0.5 * Ay * S) * S;
     if (evFar(Dx, Dy, Dx + 0.5 * Vx * S, Dy + 0.5 * Vy * S, x1, y1, r)) return EV_INF;
-    real c[5];
-    c[4] = 0.25 * (Ax * Ax + Ay * Ay);
-    c[3] = Vx * Ax + Vy * Ay;
-    c[2] = Vx * Vx + Vy * Vy + Dx * Ax + Dy * Ay;
-    c[1] = 2 * (Dx * Vx + Dy * Vy);
-    c[0] = Dx * Dx + Dy * Dy - r * r;
-    real s = evFirstEntry(c, 4, S, EV_INF);
+    real s = evDiscEntry(Dx, Dy, Vx, Vy, Ax, Ay, S, r);
     return s >= 0 ? t0 + s : EV_INF;
 }
 
@@ -347,13 +377,7 @@ inline void evPredTable(EvEngine& E, const Sim& sim, int i) {
     for (int k = 0; k < T.npt; ++k) {
         real Dx = px - T.ptx[k], Dy = py - T.pty[k], r = R + T.ptr[k];
         if (evFar(Dx, Dy, cx - T.ptx[k], cy - T.pty[k], ex - T.ptx[k], ey - T.pty[k], r)) continue;
-        real c[5];
-        c[4] = 0.25 * (ax * ax + ay * ay);
-        c[3] = vx * ax + vy * ay;
-        c[2] = vx * vx + vy * vy + Dx * ax + Dy * ay;
-        c[1] = 2 * (Dx * vx + Dy * vy);
-        c[0] = Dx * Dx + Dy * Dy - r * r;
-        real s = evFirstEntry(c, 4, S, EV_INF);
+        real s = evDiscEntry(Dx, Dy, vx, vy, ax, ay, S, r);
         if (s >= 0 && t0 + s < best) { best = t0 + s; kind = EVK_CIRC; idx = k; }
     }
     // pocket capture: depth past the mouth line exceeds p.depth (with the lateral check)
@@ -386,7 +410,21 @@ inline void evPredTable(EvEngine& E, const Sim& sim, int i) {
 }
 
 inline void evRepredict(EvEngine& E, const Sim& s, int i) {
-    for (int j = 0; j < E.n; ++j) if (j != i) evPredPair(E, s.P, i, j);
+    const EvBall& A = E.e[i];
+    const real r = 2 * s.P.R;
+    for (int j = 0; j < E.n; ++j) {
+        if (j == i) continue;
+        const int lo = i < j ? i : j, hi = i < j ? j : i;
+        const EvBall& B = E.e[j];
+        // cheap rejection (same tests evPairTime starts with): skip the call when the pair
+        // cannot meet and has no stored prediction anyway
+        if (A.ph < 0 || B.ph < 0 || (A.ph == 0 && B.ph == 0) ||
+            A.bx0 > B.bx1 + r || B.bx0 > A.bx1 + r || A.by0 > B.by1 + r || B.by0 > A.by1 + r) {
+            if (E.tp[lo][hi] < EV_INF) evSetTp(E, lo, hi, EV_INF);
+            continue;
+        }
+        evSetTp(E, lo, hi, evPairTime(E, s.P, lo, hi));
+    }
     evPredTable(E, s, i);
 }
 
@@ -394,11 +432,13 @@ inline void evRepredict(EvEngine& E, const Sim& s, int i) {
 inline void evInit(EvEngine& E, const Sim& s) {
     E.n = s.n; E.now = s.t; E.nEv = 0; E.capped = 0; E.nBadEscape = 0; E.tDisp = s.t; E.nLog = 0;
     for (int i = 0; i < s.n; ++i) evLoad(E.e[i], s.b[i], s.P, s.t);
+    // pairs of two resting balls can never meet: start from "no event" and predict only
+    // around the moving balls (usually just the cue ball)
     for (int i = 0; i < s.n; ++i) {
-        for (int j = i + 1; j < s.n; ++j) E.tp[i][j] = evPairTime(E, s.P, i, j);
-        evRowScan(E, i);
+        for (int j = i + 1; j < s.n; ++j) E.tp[i][j] = EV_INF;
+        E.rowMin[i] = EV_INF; E.rowArg[i] = -1; E.tc[i] = EV_INF; E.ck[i] = 0; E.ci[i] = -1;
     }
-    for (int i = 0; i < s.n; ++i) evPredTable(E, s, i);
+    for (int i = 0; i < s.n; ++i) if (E.e[i].ph > 0) evRepredict(E, s, i);
 }
 inline bool evMoving(const EvEngine& E) {
     for (int i = 0; i < E.n; ++i) if (E.e[i].ph > 0) return true;
@@ -456,10 +496,17 @@ inline int evRun(EvEngine& E, Sim& s, real tStop, int untilFirstHit) {
     const Params& P = s.P;
     const int n = s.n;
     for (;;) {
+        // earliest event; ties: phase changes before table events before pairs, lower index first
+        real t1 = EV_INF, t2 = EV_INF, t3 = EV_INF; int a1 = -1, a2 = -1, a3 = -1;
+        for (int i = 0; i < n; ++i) {
+            if (E.e[i].te < t1) { t1 = E.e[i].te; a1 = i; }     // te = EV_INF unless moving
+            if (E.tc[i] < t2) { t2 = E.tc[i]; a2 = i; }
+            if (E.rowMin[i] < t3) { t3 = E.rowMin[i]; a3 = i; }
+        }
         real tm = EV_INF; int type = EVT_NONE, a = -1, b = -1;
-        for (int i = 0; i < n; ++i) if (E.e[i].ph > 0 && E.e[i].te < tm) { tm = E.e[i].te; type = EVT_PHASE; a = i; }
-        for (int i = 0; i < n; ++i) if (E.tc[i] < tm) { tm = E.tc[i]; type = EVT_TABLE; a = i; }
-        for (int i = 0; i < n; ++i) if (E.rowMin[i] < tm) { tm = E.rowMin[i]; type = EVT_PAIR; a = i; b = E.rowArg[i]; }
+        if (a1 >= 0) { tm = t1; type = EVT_PHASE; a = a1; }
+        if (a2 >= 0 && t2 < tm) { tm = t2; type = EVT_TABLE; a = a2; }
+        if (a3 >= 0 && t3 < tm) { tm = t3; type = EVT_PAIR; a = a3; b = E.rowArg[a3]; }
         if (type == EVT_NONE || tm > tStop) break;
         if (tm < E.now) tm = E.now;                         // never step back in time
         E.now = tm;

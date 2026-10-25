@@ -3,6 +3,7 @@
 #pragma once
 #include "../engine/bot.h"
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>

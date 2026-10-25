@@ -11,7 +11,8 @@ Playable build: the artifact "Felt & Chalk 8-Ball" on claude.ai (`web/index.html
 | Path | What |
 |---|---|
 | `engine/pmath.h` | libc-free math (sin, log, exp, atan2) and a xoshiro RNG, bit-identical natively and in WASM |
-| `engine/physics.h` | Ball/cloth/cushion physics, table builder (pool and snooker pockets), human-error noise model |
+| `engine/physics.h` | Ball/cloth/cushion physics, table builder (pool and snooker pockets), human-error noise model, reference fixed-step integrator |
+| `engine/events.h` | Event-driven simulation: analytic trajectories, exact event times, used by the game, the bots and training |
 | `engine/rules8.h`, `engine/rulesSnk.h` | 8-ball rules; snooker rules incl. free ball, foul options, colour nomination |
 | `engine/bot.h` | Two-phase search bot (root-finding + best-first pattern search), evaluators, snooker miss referee |
 | `engine/wasm_api.cpp` | C ABI used by the page |
@@ -26,6 +27,7 @@ Playable build: the artifact "Felt & Chalk 8-Ball" on claude.ai (`web/index.html
 scripts/setup.sh        # compilers + npm deps for the web build (three@0.128.0, binaryen@116.0.0)
 make tools              # native training tools in train/bin
 make tests              # physics + snooker rules checks
+make build/ev_test && build/ev_test   # event engine vs reference stepper, invariants, speed (~2.5 min)
 ./build.sh              # web/index.html
 ```
 

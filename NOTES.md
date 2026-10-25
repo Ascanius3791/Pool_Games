@@ -69,6 +69,22 @@
   - Speed: snooker shot ~55 us vs ~1.1 ms (about 20x), first-contact partial sims about 55x, bot decision at budget 400: 0.17 s -> 0.006 s native. The referee went from 50-200 ms to about 1 ms.
   - Middle pockets: the 1 cm "left the table" net acts before the 1.0R capture depth (same in both engines); kept for identical pocket behaviour.
 
+- v10 (2026-10-25): optimisation pass, effort slider, training set-up for the cloud
+  - Engine: predictions only around moving balls at start, cheap pair rejection before any work (bounding boxes of whole phases), row minima for the pair times, one fused event scan, closed-form contact time for straight paths (rolling balls, straight stun/screw, ball at rest; quartic only for curved paths; fuzzed against the quartic, max diff 3e-13 s), smaller Table arrays (Sim 10.1 -> ~7.3 kB per copy).
+  - Bot: lane checks only when the cheap cut/entry-angle tests pass, and in the snooker evaluation only when the shot could enter the top two.
+  - Builds: tools/tests -O3 -march=native (8% more; bit-identical results), WASM -O3. Native: full snooker shot about 42 us (stepper 1.08 ms, about 26x), partial 4.4 us (77x). Bot decision at 1000 sims: 25.8 -> 15.5 ms (noisy), 21.7 -> 14.1 ms (exact). Browser (WASM): about 45-85 us per sim.
+  - Deep thinking: budgets above 1500 widen the search (up to 80 safeties, 6 powers x 4 spins, noisy K up to 24) and spend leftover budget on extra noisy samples of the top 6 candidates. Budgets <= 1500 behave exactly as before.
+  - Effort slider: 20-50,000 sims on a log scale, default 3,000 (new storage key, so the old 400 is not reused). Browser: 50,000 noisy sims about 2.2 s at the break-off. Without human error the search usually converges well before a large budget.
+  - Training defaults: GAMES=snk, BUDGET=2000, SKILLS="1.0 0 1.0 2.0" rotating over cores (frames at SKILL -> data/snk for tuning/arena, others -> data/snk_s<skill>), idle cores self-play during arenas, EXPORT=0 for make smoke. New raw-position records (*.posrec, 104 B/position, documented in TRAINING.md) for the skill-conditioned NN.
+  - Throughput: about 67 snooker frames/min/core at budget 2000 (was about 2 frames/min/core at budget 200 with the stepper).
+  - Smoke test (budget 80, 1.5 min): win-table evaluator beat the legacy points evaluator 192-143 (+51 +- 38 Elo, SPRT accept). Not exported (smoke).
+  - GitHub repo: github.com/Ascanius3791/Pool_Games. The cloud sandbox cannot push to it (repo not in the session's authorised set).
+
+## Next steps (for the next session)
+1. Paul starts the workflow (Actions -> Train bots -> Run workflow, defaults). Read runs/gh_<n>/REPORT.md on branch training/<n>, merge if good.
+2. Skill-conditioned snooker NN on the *.posrec data: inputs = ball positions (e.g. per-ball features or a coarse grid) + score diff, points remaining, phase, ball in hand, free ball, skill; output = win probability. Pretrain on skill 0 frames, refine on all skills; replace SnkEval in valueAfter; arena against the win table.
+3. Maybe: per-ball "spatial grid" in the engine if many-ball shots dominate; two-shot lookahead for safeties.
+
 ## Strategy gaps and training plan (discussed 2026-10-24)
 - The bot looks one shot ahead plus a static evaluation, so it has no multi-visit planning.
 - The snooker value is linear in points (points this shot ± expected next visit). It ignores score context, so it does not play for snookers when it needs them and does not tighten up when far ahead. The 'snookered' term is a flat -3.

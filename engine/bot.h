@@ -66,13 +66,18 @@ inline bool legalTarget(const Game8& g, int p, int id) {
 
 inline bool laneClear(const Sim& s, real x0, real y0, real x1, real y1, real clr, int skipA, int skipB) {
     real dx = x1 - x0, dy = y1 - y0, L2 = dx * dx + dy * dy;
+    // balls outside the lane's bounding box (grown by clr) cannot block it
+    const real bx0 = pmin(x0, x1) - clr, bx1 = pmax(x0, x1) + clr, by0 = pmin(y0, y1) - clr, by1 = pmax(y0, y1) + clr;
+    const real clr2 = clr * clr;
     for (int i = 0; i < s.n; ++i) {
-        if (i == skipA || i == skipB || !s.b[i].on) continue;
-        real px = s.b[i].x - x0, py = s.b[i].y - y0;
-        real t = L2 > 0 ? (px * dx + py * dy) / L2 : 0;
-        if (t < 0) t = 0; else if (t > 1) t = 1;
+        const Ball& b = s.b[i];
+        if (b.x < bx0 || b.x > bx1 || b.y < by0 || b.y > by1) continue;
+        if (i == skipA || i == skipB || !b.on) continue;
+        real px = b.x - x0, py = b.y - y0;
+        real dot = px * dx + py * dy, t;
+        if (!(L2 > 0) || dot <= 0) t = 0; else if (dot >= L2) t = 1; else t = dot / L2;
         real ex = px - t * dx, ey = py - t * dy;
-        if (ex * ex + ey * ey < clr * clr) return false;
+        if (ex * ex + ey * ey < clr2) return false;
     }
     return true;
 }
@@ -98,21 +103,32 @@ inline bool objLane(const Sim& s, int t, int k, real& ux, real& uy, real& d2) {
 }
 
 // Geometric ease in [0,1] of potting t in k from cue position (cx,cy). 0 = impossible.
-inline real shotEase(const Sim& s, real cx, real cy, int t, int k, real* phiOut = 0) {
-    real ux, uy, d2;
-    if (!objLane(s, t, k, ux, uy, d2)) return 0;
-    const real R = s.P.R;
+// threshold variant: if the geometric ease cannot exceed `need`, return it without the two
+// lane checks (callers that only keep values above `need` get identical results, cheaper)
+inline real shotEaseAbove(const Sim& s, real cx, real cy, int t, int k, real need, real* phiOut = 0);
+inline real shotEase(const Sim& s, real cx, real cy, int t, int k, real* phiOut = 0) { return shotEaseAbove(s, cx, cy, t, k, -1, phiOut); }
+inline real shotEaseAbove(const Sim& s, real cx, real cy, int t, int k, real need, real* phiOut) {
+    // cheap geometry first (entry angle, cut angle), the two lane checks last
+    real px, py; pocketTarget(s, k, px, py);
     const Ball& B = s.b[t];
+    real ux = px - B.x, uy = py - B.y, d2 = psqrt(ux * ux + uy * uy);
+    if (d2 < 1e-6) return 0;
+    ux /= d2; uy /= d2;
+    const Pocket& PK = s.T.pk[k];
+    if (ux * PK.nx + uy * PK.ny < (k >= 4 ? 0.55 : 0.40)) return 0;
+    const real R = s.P.R;
     real gx = B.x - 2 * R * ux, gy = B.y - 2 * R * uy;
     real vx = gx - cx, vy = gy - cy, d1 = psqrt(vx * vx + vy * vy);
     if (d1 < 1e-6) return 0;
     vx /= d1; vy /= d1;
     real cth = vx * ux + vy * uy;
     if (cth < 0.20) return 0;                                   // > ~78 deg cut
-    if (!laneClear(s, cx, cy, gx, gy, 2 * R * 0.98, 0, t)) return 0;
-    if (phiOut) *phiOut = patan2(vy, vx);
     real e = cth * cth * pexp(-0.45 * d1 - 0.75 * d2);
     if (k >= 4) e *= 0.8;
+    if (e <= need) return e;                                    // caller ignores it anyway
+    if (!laneClear(s, B.x, B.y, px, py, 2 * R * 0.98, t, -1)) return 0;
+    if (!laneClear(s, cx, cy, gx, gy, 2 * R * 0.98, 0, t)) return 0;
+    if (phiOut) *phiOut = patan2(vy, vx);
     return e;
 }
 
@@ -308,7 +324,12 @@ inline void snkFeatures(const GameSnk& g, int bih, real* f) {
         for (int k = 0; k < s.T.npk; ++k) {
             real e;
             if (bih) { real ux, uy, d2; e = objLane(s, t, k, ux, uy, d2) ? pexp(-0.15 - 0.6 * d2) : 0; }
-            else e = shotEase(s, s.b[0].x, s.b[0].y, t, k);
+            else {   // only values that change the top two matter: skip lane checks otherwise
+                int vv = snkValue(t);
+                real need = pmin(e2, e1 * (v1 + 3) / (vv + 3));
+                e = shotEaseAbove(s, s.b[0].x, s.b[0].y, t, k, need);
+                if (e <= need) e = 0;
+            }
             int v = snkValue(t);
             if (e * (v + 3) > e1 * (v1 + 3)) { e2 = e1; e1 = e; v1 = v; } else if (e > e2) e2 = e;
         }
@@ -334,7 +355,12 @@ inline real snkVisit(const GameSnk& g, int bih) {
         for (int k = 0; k < s.T.npk; ++k) {
             real e;
             if (bih) { real ux, uy, d2; e = objLane(s, t, k, ux, uy, d2) ? pexp(-0.15 - 0.6 * d2) : 0; }
-            else e = shotEase(s, s.b[0].x, s.b[0].y, t, k);
+            else {   // only values that change the top two matter: skip lane checks otherwise
+                int vv = snkValue(t);
+                real need = pmin(e2, e1 * (v1 + 3) / (vv + 3));
+                e = shotEaseAbove(s, s.b[0].x, s.b[0].y, t, k, need);
+                if (e <= need) e = 0;
+            }
             int v = snkValue(t);
             if (e * (v + 3) > e1 * (v1 + 3)) { e2 = e1; e1 = e; v1 = v; } else if (e > e2) e2 = e;
         }
@@ -486,6 +512,18 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
     const Sim& s = g.sim;
     const real R = s.P.R;
     const bool bih = g.ballInHand != 0;
+    // deep thinking (more than 1500 simulations): a wider search (more safeties, more
+    // power/spin variants) and, with human error, more noisy samples per shot. Budgets up
+    // to 1500 behave exactly as before.
+    if (c.budget > 1500) {
+        const real sc = c.budget / 1500;
+        c.nSafe = (int)pmin(80, 20 * psqrt(sc));
+        c.nPow = 6; const real pw[6] = {0.16, 0.22, 0.30, 0.40, 0.52, 0.68};
+        for (int i = 0; i < 6; ++i) c.pows[i] = pw[i];
+        c.nSpin = 4; const real sp4[4] = {-0.40, -0.15, 0.10, 0.35};
+        for (int i = 0; i < 4; ++i) c.spins[i] = sp4[i];
+        if (c.noisy) c.K = (int)pmin(24, 8 * pexp(plog(sc) / 3));
+    }
     const real p1Budget = c.phase2 ? c.budget * 0.5 : c.budget;
 
     // ---- 8-ball break: hit the apex at full power from a few spots
@@ -632,6 +670,26 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
             cd.sV *= 0.5; cd.sB *= 0.5; cd.sA *= 0.5; cd.sPhi *= 0.5;
             if (cd.sV < 0.02 && cd.sB < 0.02 && cd.sA < 0.02 && cd.sPhi < 2e-4) cd.done = 1;
         }
+    }
+    // ---- budget left after the search converged (human error only): more noisy samples
+    // for the leading candidates, so the final choice is less a matter of luck
+    if (c.noisy && c.phase2 && c.used < c.budget) {
+        int idx[6], m = 0;
+        for (int r = 0; r < 6; ++r) {
+            int bi = -1;
+            for (int i = 0; i < L.n; ++i) {
+                if (L.c[i].level == 0 || L.c[i].val < -1e8) continue;
+                bool taken = false; for (int q = 0; q < m; ++q) if (idx[q] == i) taken = true;
+                if (!taken && (bi < 0 || L.c[i].val > L.c[bi].val)) bi = i;
+            }
+            if (bi < 0) break;
+            idx[m++] = bi;
+        }
+        real sum[6]; int ns[6];
+        for (int q = 0; q < m; ++q) { sum[q] = L.c[idx[q]].val * c.K; ns[q] = c.K; }
+        for (int k = c.K; m > 0 && k < 6 * c.K && c.used < c.budget; ++k)
+            for (int q = 0; q < m && c.used < c.budget; ++q) { sum[q] += simFull(c, g, L.c[idx[q]], true, k); ns[q]++; }
+        for (int q = 0; q < m; ++q) L.c[idx[q]].val = sum[q] / ns[q];
     }
     // ---- choose: noisy -> best among noise-evaluated candidates
     int best = -1;

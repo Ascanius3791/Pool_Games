@@ -201,7 +201,7 @@ body.cam2d #power { height: min(30vh, 240px); }
   <button id="bHelp">Controls<span class="k">H</span></button>
   <button id="bRerack" hidden>Re-rack</button>
   <button id="bHand" hidden>Ball in hand</button>
-  <div id="effortBox" hidden><label for="effort">Bot thinking: <b id="effortTag">Normal</b></label><input type="range" id="effort" min="0" max="1" step="0.01"><span id="effortV">tries 400 shots</span></div>
+  <div id="effortBox" hidden><label for="effort">Bot thinking: <b id="effortTag">Normal</b></label><input type="range" id="effort" min="0" max="1" step="0.01"><span id="effortV">tries 3,000 shots</span></div>
   <button id="bDisplay" aria-expanded="false">Display<span class="k">U</span></button>
 </div>
 
@@ -369,7 +369,7 @@ async function loadEngine() {
 
 // ------------------------------------------------------------------ state
 const S = {
-  mode: "two", noisy: false, skill: 1, type: 0, builtType: -1, effort: 400,
+  mode: "two", noisy: false, skill: 1, type: 0, builtType: -1, effort: 3000,
   phase: "menu",            // menu | aim | stroke | moving | over
   phi: 0, power: 0.35, a: 0, b: 0,
   charging: false, chargeSrc: null, chargeT: 0,
@@ -1346,23 +1346,24 @@ function setupProfiles() {
   $("peClose").onclick = () => { $("profEd").hidden = true; fillProfileSelects(); };
   applyProfile();
 }
-function effortTag(e) { return e < 60 ? "Quick" : e < 200 ? "Light" : e < 600 ? "Normal" : e < 1500 ? "Careful" : "Deep"; }
+function effortTag(e) { return e < 150 ? "Quick" : e < 600 ? "Light" : e < 2500 ? "Normal" : e < 8000 ? "Careful" : e < 25000 ? "Deep" : "Very deep"; }
 function describeEffort() {
   const e = S.effort;
   const tag = effortTag(e);
   $("optEffortTag").textContent = tag; $("effortTag").textContent = tag;
-  $("effortV").textContent = `tries ${e} shots`;
+  $("effortV").textContent = `tries ${e.toLocaleString("en-US")} shots`;
   const t = S.msPerSim ? ` On this device that takes about ${(e * S.msPerSim / 1000).toFixed(1)} s per shot.` : "";
-  $("optEffortInfo").innerHTML = `Before every shot the bot plays <b>${e}</b> shots through in its head and keeps the best. First it looks at many different shots, then it fine-tunes the most promising ones. More thinking means it pots more, leaves itself better position and plays safer safeties, but you wait longer.${t}`;
+  $("optEffortInfo").innerHTML = `Before every shot the bot plays <b>${e}</b> shots through in its head and keeps the best. First it looks at many different shots, then it fine-tunes the most promising ones. More thinking means it pots more, leaves itself better position and plays safer safeties, but you wait longer. Without human error the bot stops early once its search has settled, so very high settings mainly matter with human error on, where it plays each shot more often to judge its risk.${t}`;
 }
-const effortFromSlider = (v) => Math.round(20 * Math.pow(150, v));
-const sliderFromEffort = (e) => Math.log(e / 20) / Math.log(150);
+const EFFORT_MIN = 20, EFFORT_MAX = 50000;
+const effortFromSlider = (v) => { const e = EFFORT_MIN * Math.pow(EFFORT_MAX / EFFORT_MIN, v); return e < 1000 ? Math.round(e / 10) * 10 : Math.round(e / 100) * 100; };
+const sliderFromEffort = (e) => Math.log(e / EFFORT_MIN) / Math.log(EFFORT_MAX / EFFORT_MIN);
 function setEffort(e, from) {
-  S.effort = Math.max(20, Math.min(3000, Math.round(e)));
+  S.effort = Math.max(EFFORT_MIN, Math.min(EFFORT_MAX, Math.round(e)));
   describeEffort();
   if (from !== "game") $("effort").value = sliderFromEffort(S.effort);
   if (from !== "menu") $("optEffort").value = sliderFromEffort(S.effort);
-  try { localStorage.setItem("feltchalk.effort", String(S.effort)); } catch (e2) {}
+  try { localStorage.setItem("feltchalk.effort2", String(S.effort)); } catch (e2) {}
 }
 function applyDisplay() {
   const st = {};
@@ -1818,7 +1819,7 @@ function placeCueFrozen(extra, opacity) {
   for (const b of S.balls) b.wasOn = b.on;
   updateHUD(); updatePowerUI(); drawSpin();
   S.cam = "orbit"; updateCamera(0, true);
-  let ef = 400; try { ef = +localStorage.getItem("feltchalk.effort") || 400; } catch (e) {}
+  let ef = 3000; try { ef = +localStorage.getItem("feltchalk.effort2") || 3000; } catch (e) {}
   setEffort(ef);
   let saved = "cue"; try { saved = localStorage.getItem("feltchalk.view") || "cue"; } catch (e) {}
   setCam(CAM_ORDER.includes(saved) ? saved : "cue");

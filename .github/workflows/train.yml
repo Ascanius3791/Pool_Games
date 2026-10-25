@@ -9,14 +9,17 @@ on:
         description: "Training hours (max 5.5)"
         default: "5"
       games:
-        description: "Bots to train"
-        default: "snk 8noisy 8std"
+        description: "Bots to train (snk, 8noisy, 8std)"
+        default: "snk"
       budget:
         description: "Bot simulations per shot"
-        default: "250"
+        default: "2000"
       skill:
-        description: "Human-error multiplier of the self-play profile (1 = Club player)"
+        description: "Human-error multiplier the evaluator is tuned at (1 = Club player)"
         default: "1.0"
+      skills:
+        description: "Snooker self-play skill per core, rotating (0 = no human error)"
+        default: "1.0 0 1.0 2.0"
 permissions:
   contents: write
 jobs:
@@ -44,6 +47,7 @@ jobs:
           GAMES: ${{ github.event.inputs.games }}
           BUDGET: ${{ github.event.inputs.budget }}
           SKILL: ${{ github.event.inputs.skill }}
+          SKILLS: ${{ github.event.inputs.skills }}
           RUN: runs/gh_${{ github.run_number }}
           BEST_FROM: train/baseline
         run: ./train/run_pipeline.sh
