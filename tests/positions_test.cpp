@@ -8,7 +8,7 @@
 //       (and the foul choice) must again be consistent. Prints per-family statistics.
 //       Exit code 1 on any failure.
 //   build/positions_test --demo FAMILY [--n 12] [--budget 2000] [--skill 1] [--samples 16]
-//                        [--verbose 1]  (evaluators: train/baseline net vs the linear evaluator
+//                        [--escapes N] [--verbose 1]  (evaluators: train/baseline net vs the linear evaluator
 //                        train/baseline/snk_params.txt + win table, as in the arena)
 //       first decision of each evaluator on N positions of FAMILY: shot kind, value, and over
 //       `samples` noisy executions how often the shot pots, fouls, or leaves the opponent
@@ -59,20 +59,25 @@ static int demo(const Args& a) {
     PosPool pool; if (fam == FAM_PERTURBED) loadPosPool(pool, splitComma(a.str("--pos-from", "data/snk")), 20000, 1);
     NoiseModel nm; defaultNoise(nm); nm.skill = skill;
     const char* who[2] = {"net", "linear"};
-    double sumLay[2] = {0}, sumFoul[2] = {0}, sumPot[2] = {0}, nSafe[2] = {0};
+    double sumLay[2] = {0}, sumFoul[2] = {0}, sumPot[2] = {0}, nSafe[2] = {0}, sumHit[2] = {0}, sumPStar = 0; int nSn = 0;
     Rng r; r.seed((u64)a.num("--seed", 5) * 977 + fam);
     for (int i = 0; i < N; ++i) {
         GameSnk g; newGameSnk(g, 4242 + i, 0); g.sim.trackOrient = 0;
         if (!genSnkStart(g, fam, r, &pool)) { printf("position %d: generation failed\n", i); continue; }
         const int me = g.turn, R = snkRemaining(g), D = lead(g);
+        const bool snookered = !g.ballInHand && snkSnookered(g, -1);
+        real pStar = -1;
+        if (snookered) { int t, r1, r2; pStar = snkEscapeChance(g, nm, 99 + i, t, r1, r2); sumPStar += pStar; nSn++; }
         if (verbose) printf("\n#%d %s, mover %s by %d, %d points left%s%s%s%s\n", i, phaseName(g), D >= 0 ? "ahead" : "behind", D >= 0 ? D : -D, R,
                             snkNeedsSnookers(g, me) ? ", NEEDS SNOOKERS" : "", snkNeedsSnookers(g, 1 - me) ? ", opponent needs snookers" : "",
-                            snkSnookered(g, -1) ? ", mover snookered" : "", g.freeBall ? ", free ball" : "");
+                            snookered ? ", mover snookered" : "", g.freeBall ? ", free ball" : "");
+        if (verbose && snookered) printf("   referee's best escape (direct / 1 / 2 cushions) hits a ball on with p* = %.2f\n", pStar);
         for (int e = 0; e < 2; ++e) {
             const SnkEval* ev = e == 0 ? &net.ev : &lin.ev;
-            BotCtx c; botDefaults(c, true, 0, 1000 + i); c.budget = budget; c.nm = nm; c.snk = ev;
+            BotCtx c; botDefaults(c, true, 0, 1000 + i); c.budget = budget; c.nm = nm; c.snk = ev; c.nEscape = (int)a.num("--escapes", 0);
             BotDecision d; botThink(c, g, d);
             int lay = 0, foul = 0, pot = 0;
+            if (snookered) sumHit[e] += snkHitChance(g, d.sp, nm, 555 + i, 24);
             for (int k = 0; k < samples; ++k) {
                 GameSnk after = playOnce(g, d, nm, 77 + 31 * k + 1000003ULL * i);
                 if (after.lastFoul) foul++;
@@ -86,7 +91,9 @@ static int demo(const Args& a) {
     }
     printf("\n%s, %d positions, budget %.0f, skill %.1f — mean over positions of the share of noisy strokes that:\n", famName(fam), N, budget, skill);
     for (int e = 0; e < 2; ++e)
-        printf("  %-6s: safety chosen %4.0f%% | pot %4.0f%%  foul %4.0f%%  leave a snooker %4.0f%%\n", who[e], 100 * nSafe[e] / N, 100 * sumPot[e] / N, 100 * sumFoul[e] / N, 100 * sumLay[e] / N);
+        printf("  %-6s: safety chosen %4.0f%% | pot %4.0f%%  foul %4.0f%%  leave a snooker %4.0f%%%s\n", who[e], 100 * nSafe[e] / N, 100 * sumPot[e] / N, 100 * sumFoul[e] / N, 100 * sumLay[e] / N,
+               nSn ? (std::string("  | snookered: chosen shot hits a ball on ") + std::to_string((int)lround(100 * sumHit[e] / nSn)) + "%").c_str() : "");
+    if (nSn) printf("  %d snookered positions: the referee's best escape would hit a ball on %.0f%% of the time (p*)\n", nSn, 100 * sumPStar / nSn);
     return 0;
 }
 

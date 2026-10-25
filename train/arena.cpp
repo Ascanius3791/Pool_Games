@@ -5,7 +5,7 @@
 //              snooker: --a-snk-params F --a-snk-table F  --b-snk-params F --b-snk-table F
 //                       [--a-snk-net F] [--b-snk-net F]  (neural evaluator on top of the table)
 //              [--elo1 30]  (SPRT H0: elo 0 vs H1: elo1, alpha = beta = 0.05)  [--sprt 0] (no early stop)
-//              [--pairs N]  (stop after N pairs)
+//              [--pairs N]  (stop after N pairs)  [--a-escapes N] [--b-escapes N] (snooker escape candidates)
 //              snooker starting positions: [--suite "break:3 snookers:1 ..."] [--pos-from DIR[,DIR]]
 // Games come in pairs with the same seed and swapped sides (A is player 0 in the first game of a
 // pair, player 1 in the second); a pair is always completed. With --suite every pair starts from
@@ -29,6 +29,7 @@ int main(int argc, char** argv) {
     const u64 seed = (u64)a.num("--seed", 1);
     const double elo1 = a.num("--elo1", 30);
     const bool sprt = a.num("--sprt", 1) != 0;
+    const int escA = (int)a.num("--a-escapes", 0), escB = (int)a.num("--b-escapes", 0);   // cushion escape candidates (bot.h addEscapeCands)
     const long maxPairs = (long)a.num("--pairs", 1e9);
     FamMix mix; bool useSuite = false; PosPool pool;
     if (snk && a.has("--suite")) {
@@ -88,7 +89,7 @@ int main(int argc, char** argv) {
             int shots = 0;
             for (; g.winner < 0 && shots < 400; ++shots) {
                 bool isA = (g.turn == 0) == aIs0;
-                BotCtx c; botDefaults(c, noisy, 0, gs * 31 + shots); c.budget = budget; c.nm = nm; c.snk = isA ? &sa.ev : &sb.ev;
+                BotCtx c; botDefaults(c, noisy, 0, gs * 31 + shots); c.budget = budget; c.nm = nm; c.snk = isA ? &sa.ev : &sb.ev; c.nEscape = isA ? escA : escB;
                 BotDecision d; botThink(c, g, d);
                 if (d.place) resetBall(g.sim.b[0], d.px, d.py);
                 prepShot(g, d.tgt);

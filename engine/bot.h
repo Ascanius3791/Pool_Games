@@ -247,6 +247,7 @@ struct BotCtx {
     int nPow; real pows[6];
     int nSpin; real spins[4];
     int nSafe;
+    int nEscape;         // snooker: cushion escape candidates when snookered (0 = off, see addEscapeCands)
     // statistics of the last decision
     int nFull, nPartial, nSecant, nRefine, nSwitch, nCand;
     real phase1Used;
@@ -259,6 +260,7 @@ inline void botDefaults(BotCtx& c, bool noisy, const float* nn, u64 seed) {
     c.nPow = 4; c.pows[0] = 0.22; c.pows[1] = 0.34; c.pows[2] = 0.48; c.pows[3] = 0.66;
     c.nSpin = 3; c.spins[0] = -0.35; c.spins[1] = 0.0; c.spins[2] = 0.3;
     c.nSafe = 20;
+    c.nEscape = 0;
 }
 inline void botLight(BotCtx& c) { c.budget = c.noisy ? 300 : 120; c.K = 5; c.nSafe = 8; }
 
@@ -660,6 +662,10 @@ template <class G> void addPotPair(BotCtx& c, const G& g, CandList& L, real cx, 
     pushCand(L, cd);
 }
 
+// escape candidates (defined with the referee below; a no-op for 8-ball)
+inline void addEscapeCands(BotCtx&, const Game8&, CandList&) {}
+inline void addEscapeCands(BotCtx& c, const GameSnk& g, CandList& L);
+
 template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
     static CandList L;
     L.n = 0;
@@ -761,6 +767,7 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
             cd.val = evaluate(c, g, cd, false);
             pushCand(L, cd);
         }
+        if (c.nEscape > 0 && !bih) addEscapeCands(c, g, L);
         // pass C: power / spin variants of the best pots
         for (int i = 0; i < nPots; ++i) {   // sort pots by value
             int bi = i; for (int j = i + 1; j < nPots; ++j) if (L.c[j].val > L.c[bi].val) bi = j;
@@ -988,5 +995,62 @@ inline int snkBotChoose(const GameSnk& g, real pStarHint, real* vals) {
     return best;
 }
 inline bool breakShot(const GameSnk&) { return false; }
+
+// Escape candidates for a snookered cue ball: the safety candidates only aim straight at a ball
+// on, so a snookered bot used to foul almost every time. Aim at the mirror images of the
+// nearest balls on (1 cushion: 4 images, 2 cushions: 12, as in snkEscapeChance), keep the
+// families with the widest hitting window (partial simulations to first contact) and add each
+// at a few powers as safety candidates (refined by the pattern search like any safety).
+inline void addEscapeCands(BotCtx& c, const GameSnk& g, CandList& L) {
+    if (!snkSnookered(g, -1)) return;
+    const Sim& s = g.sim; const real R = s.P.R;
+    const real hx = s.T.L / 2 - R, hy = s.T.W / 2 - R;
+    const Ball& cb = s.b[0];
+    int ids[22], n = 0;
+    for (int t = 1; t < s.n; ++t) if (snkOn(g, t)) ids[n++] = t;
+    for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) {
+        real di = (s.b[ids[i]].x - cb.x) * (s.b[ids[i]].x - cb.x) + (s.b[ids[i]].y - cb.y) * (s.b[ids[i]].y - cb.y);
+        real dj = (s.b[ids[j]].x - cb.x) * (s.b[ids[j]].x - cb.x) + (s.b[ids[j]].y - cb.y) * (s.b[ids[j]].y - cb.y);
+        if (dj < di) { int t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
+    }
+    if (n > 4) n = 4;
+    auto mir = [&](real& x, real& y, int r) {
+        if (r == 0) x = 2 * hx - x; else if (r == 1) x = -2 * hx - x; else if (r == 2) y = 2 * hy - y; else y = -2 * hy - y;
+    };
+    struct Esc { int hits, tgt; real phi, w; } best[8]; int nb = 0;
+    ShotParams sp; sp.V = 2.4; sp.a = 0; sp.b = 0;
+    for (int i = 0; i < n; ++i) {
+        const Ball& T = s.b[ids[i]];
+        for (int f = 1; f < 17; ++f) {
+            real ix = T.x, iy = T.y;
+            if (f < 5) mir(ix, iy, f - 1);
+            else { int k = f - 5, ra = k / 3, rb = k % 3; if (rb >= ra) rb++; mir(ix, iy, rb); mir(ix, iy, ra); }
+            real dx = ix - cb.x, dy = iy - cb.y, dist = psqrt(dx * dx + dy * dy);
+            if (dist < 1e-6) continue;
+            const real phiC = patan2(dy, dx), w = 2 * R / dist;
+            const int G = 9; int hit[G], cnt = 0, run = 0, bestRun = 0, bestEnd = -1;
+            for (int k = 0; k < G; ++k) {
+                sp.phi = phiC + (k - (G - 1) / 2) * w * 1.6 / ((G - 1) / 2);
+                hit[k] = snkFirstOn(g, sp, 0, 0); c.used += 0.25; c.nPartial++; cnt += hit[k];
+                run = hit[k] ? run + 1 : 0; if (run > bestRun) { bestRun = run; bestEnd = k; }
+            }
+            if (!bestRun) continue;
+            const real kMid = bestEnd - (bestRun - 1) * 0.5;   // centre of the widest run of hits
+            Esc e; e.hits = bestRun; e.tgt = ids[i]; e.w = w; e.phi = phiC + (kMid - (G - 1) / 2) * w * 1.6 / ((G - 1) / 2);
+            int slot = nb < 8 ? nb++ : -1;
+            if (slot < 0) { int lo = 0; for (int q = 1; q < 8; ++q) if (best[q].hits < best[lo].hits) lo = q; if (best[lo].hits < e.hits) slot = lo; }
+            if (slot >= 0) best[slot] = e;
+        }
+    }
+    const real pw[3] = {0.28, 0.40, 0.55};
+    for (int q = 0; q < nb && q < c.nEscape; ++q)
+        for (int ip = 0; ip < 3; ++ip) {
+            Cand cd; cd.place = 0; cd.px = cb.x; cd.py = cb.y; cd.tgt = best[q].tgt; cd.pk = -1; cd.kind = 1;
+            cd.sp.phi = best[q].phi; cd.sp.V = powerToSpeed(s.P, pw[ip]); cd.sp.a = 0; cd.sp.b = 0;
+            cd.level = 0; cd.done = 0; cd.sV = 0.2; cd.sB = 0.2; cd.sA = 0; cd.sPhi = 0.15 * best[q].w; cd.slope = 0;
+            cd.val = evaluate(c, g, cd, false);
+            pushCand(L, cd);
+        }
+}
 
 } // namespace pool
