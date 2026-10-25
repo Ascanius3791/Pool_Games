@@ -19,7 +19,8 @@ Playable build: the artifact "Felt & Chalk 8-Ball" on claude.ai (`web/index.html
 | `web/template.html` | three.js front end; `./build.sh` embeds the WASM and a JS fallback into `web/index.html` |
 | `train/` | Native training tools and the pipeline (see `TRAINING.md`) |
 | `train/baseline/` | Starting evaluators (binary), `train/out/` the headers compiled into the game |
-| `tests/` | Physics checks, bot tests, snooker rule tests, headless-browser UI tests (Playwright) |
+| `train/replay.cpp` | Replays a game saved by the page (`train/bin/replay FILE --think N`) |
+| `tests/` | Physics checks, bot tests, snooker rule and escape tests, replay round trip (`node tests/replay_node.js`), headless-browser UI tests |
 
 ## Build
 

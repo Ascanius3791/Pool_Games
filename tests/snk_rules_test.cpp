@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     Rng r; r.seed(7 + fr);
     int shots = 0;
     while (g.winner < 0 && shots < 400) {
-      BotCtx c; botDefaults(c, true, nullptr, 1000 * fr + shots); c.budget = budget; c.nm = nm;
+      BotCtx c; botDefaults(c, true, nullptr, 1000 * fr + shots); c.budget = budget; c.nm = nm; c.refMode = mode;
       BotDecision d; botThink(c, g, d);
       GameSnk pre = g;
       if (d.place) resetBall(g.sim.b[0], d.px, d.py);
@@ -35,7 +35,8 @@ int main(int argc, char** argv) {
         if (verbose && ri.checked) printf("  shot %d p%d foul=%d miss=%d reason=%d direct=%d p*=%.2f played=%.2f esc=%d(%d,%d) misscount=%d\n", shots, pre.turn, g.lastFoul, ri.miss, ri.reason, ri.direct, ri.pStar, ri.pPlayed, ri.escType, ri.escR1, ri.escR2, g.missCount[pre.turn]);
         if (g.winner < 0 && g.pendingChoice) {
           if (g.freeAvail) freeballs++;
-          real v[3]; int ch = snkBotChoose(g, ri.pStar, v);
+          BotCtx cc; botDefaults(cc, true, nullptr, 7000 * fr + shots); cc.budget = budget; cc.nm = nm; cc.refMode = mode;
+          real v[3]; int ch = snkChooseOption(cc, g, pre, v);
           if (ch == CH_REPLACE) replaces++; else if (ch == CH_PUTBACK) putbacks++;
           if (verbose) printf("  choice by p%d: %s (play %.1f, back %.1f, replace %.1f) freeAvail=%d\n", g.turn, ch == 1 ? "play" : ch == 2 ? "put back" : "replace", v[0], v[1], v[2], g.freeAvail);
           snkApplyChoice(g, pre, ch);

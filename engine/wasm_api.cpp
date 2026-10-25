@@ -179,6 +179,7 @@ static u64 botSeed = 1;
 EXPORT(botThink) void botThink(int noisy, int useNN, double budget) {
     botDefaults(BOT, noisy != 0, (useNN && !TYPE) ? (noisy ? NN_NOISY : NN_STD) : 0, botSeed++);
     BOT.nm = NM;     // the bot plays with the same unsteady arm
+    BOT.refMode = REF_MODE; BOT.refTau = REF_TAU;
     if (TYPE) BOT.snk = snkEvaluator(noisy);
     BOT.budget = budget;
     BotDecision d;
@@ -210,7 +211,9 @@ EXPORT(advance) int advance(double frameDt) {
     return moving;
 }
 
-EXPORT(endShot) void endShot() {
+// noisy/budget: how the computer judges the foul options (a quarter of the budget per option;
+// budget 0 skips that, e.g. when a replay supplies the choice)
+EXPORT(endShot) void endShot(int noisy, double budget) {
     Sim& s = SIM();
     liveOn = 0;
     for (int i = 0; i < s.n; ++i) { Ball& b = s.b[i]; b.vx = b.vy = b.wx = b.wy = b.wz = 0; }
@@ -219,7 +222,12 @@ EXPORT(endShot) void endShot() {
     if (TYPE) {
         endShotSnk(GS);
         snkReferee(PRE, GS, INTENDED, NM, REF_MODE, REF_TAU, botSeed * 977 + 13, REF);
-        if (GS.pendingChoice) CHOICE_BEST = snkBotChoose(GS, REF.pStar, CHOICE_VALS);
+        CHOICE_BEST = CH_PLAY; CHOICE_VALS[0] = CHOICE_VALS[1] = CHOICE_VALS[2] = -1e9;
+        if (GS.pendingChoice && budget > 0) {
+            BotCtx c; botDefaults(c, noisy != 0, 0, botSeed++); c.nm = NM; c.budget = budget;
+            c.refMode = REF_MODE; c.refTau = REF_TAU; c.snk = snkEvaluator(noisy);
+            CHOICE_BEST = snkChooseOption(c, GS, PRE, CHOICE_VALS);
+        }
     } else endShot8(G8);
     OUT[0] = e.firstHit; OUT[1] = e.nPot;
     for (int k = 0; k < e.nPot; ++k) OUT[2 + k] = e.pot[k];
@@ -232,7 +240,14 @@ static bool placeOkNow(double x, double y, int self) {
 // ---- snooker: referee settings, foul options, free ball
 EXPORT(refSettings) void refSettings(int mode, double tau) { REF_MODE = mode; REF_TAU = tau; }
 EXPORT(snkChoose) void snkChoose(int opt) { snkApplyChoice(GS, PRE, opt); }
+// replays: apply the recorded choice even if this referee would not have offered it
+EXPORT(snkForceChoice) void snkForceChoice(int opt) { GS.pendingChoice |= opt; snkApplyChoice(GS, PRE, opt); }
 // colour nomination (after a red)
+// player p concedes the game (frame)
+EXPORT(resign) void resign(int p) {
+    if (TYPE) { if (GS.winner < 0) { GS.winner = 1 - p; GS.pendingChoice = 0; } }
+    else if (G8.winner < 0) G8.winner = 1 - p;
+}
 EXPORT(setNomRequired) void setNomRequired(int on) { GS.nomRequired = on ? 1 : 0; }
 EXPORT(setNominated) int setNominated(int id) {
     if (!TYPE || GS.phase != SNK_COLOUR_ON || id < 16 || id > 21 || !GS.sim.b[id].on) return 0;
@@ -267,6 +282,7 @@ EXPORT(setFreeNom) int setFreeNom(int id) {
 // the computer's favourite target for the player to move (used to nominate a free ball)
 EXPORT(botFavourite) int botFavourite(int noisy, double budget) {
     BotCtx c; botDefaults(c, noisy != 0, 0, botSeed++); c.nm = NM; c.budget = budget;
+    c.refMode = REF_MODE; c.refTau = REF_TAU;
     if (TYPE) c.snk = snkEvaluator(noisy);
     BotDecision d;
     if (TYPE) pool::botThink(c, GS, d); else pool::botThink(c, G8, d);

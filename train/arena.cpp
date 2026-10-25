@@ -59,7 +59,10 @@ int main(int argc, char** argv) {
                 executeShot(g, d.sp, noisy, nm, rng); simulate(g.sim); endShotSnk(g);
                 if (g.pendingChoice && g.winner < 0) {
                     RefInfo ri; snkReferee(pre, g, d.sp, nm, 0, 0.5, gs + shots, ri);
-                    if (g.winner < 0 && g.pendingChoice) { real v[3]; snkApplyChoice(g, pre, snkBotChoose(g, ri.pStar, v)); }
+                    if (g.winner < 0 && g.pendingChoice) {
+                        BotCtx cc; botDefaults(cc, noisy, 0, gs * 37 + shots); cc.budget = budget; cc.nm = nm; cc.snk = ((g.turn == 0) == aIs0) ? &sa.ev : &sb.ev;
+                        real v[3]; snkApplyChoice(g, pre, snkChooseOption(cc, g, pre, v));
+                    }
                 }
             }
             if (g.winner < 0) winner = g.score[0] == g.score[1] ? -1 : (g.score[0] > g.score[1] ? 0 : 1);

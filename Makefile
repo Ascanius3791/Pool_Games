@@ -2,7 +2,7 @@
 CXX ?= g++
 CXXFLAGS ?= -O3 -march=native -std=c++17 -ffp-contract=off
 HDRS := $(wildcard engine/*.h) train/common.h
-TOOLS := train/bin/selfplay train/bin/tune train/bin/arena train/bin/abstract_snk train/bin/snkfeat
+TOOLS := train/bin/selfplay train/bin/tune train/bin/arena train/bin/abstract_snk train/bin/snkfeat train/bin/replay
 
 .PHONY: tools tests web clean smoke
 tools: $(TOOLS)
@@ -15,10 +15,11 @@ build/%: tests/%.cpp $(HDRS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-tests: build/test_physics build/snk_rules_test build/bot_test build/ev_test
+tests: build/test_physics build/snk_rules_test build/bot_test build/ev_test build/snk_escape_test
 	./build/test_physics
 	./build/ev_test quick
 	./build/snk_rules_test 1.0 1 120 0
+	./build/snk_escape_test 0.35 20 600 0
 
 web:
 	./build.sh

@@ -234,6 +234,8 @@ inline real snkWin(const SnkEval& ev, real D, int R) {
     return ((1 - f) * row[i] + f * row[i + 1]) / 255.0;
 }
 
+// an escape from a snooker: aim phi (best centre of the hitting window, step dphi), chance p
+struct SnkEscFam { real p, phi, dphi; int type, a, b, tgt; };
 struct BotCtx {
     const float* nn;     // NN weights for the 8-ball evaluator (0 = heuristic)
     const SnkEval* snk;  // snooker evaluator (0 = legacy points evaluation)
@@ -247,6 +249,12 @@ struct BotCtx {
     int nPow; real pows[6];
     int nSpin; real spins[4];
     int nSafe;
+    // snooker miss rule as the referee applies it (mode 0 judged by profile with threshold tau, 1 pro rules)
+    int refMode; real refTau;
+    int mxDirect; real mxPStar;   // per decision: clear sight of a ball on (-1 unknown), escape chance p* (-1 not judged)
+    real rootW;                   // per decision: win chance of the position as it stands (-1: points evaluator)
+    SnkEscFam esc[6]; int nEsc;   // escape windows when snookered
+    bool foulGuard;               // a deliberate foul into a miss is never preferred to a real attempt (off: the evaluator alone decides)
     // statistics of the last decision
     int nFull, nPartial, nSecant, nRefine, nSwitch, nCand;
     real phase1Used;
@@ -259,6 +267,7 @@ inline void botDefaults(BotCtx& c, bool noisy, const float* nn, u64 seed) {
     c.nPow = 4; c.pows[0] = 0.22; c.pows[1] = 0.34; c.pows[2] = 0.48; c.pows[3] = 0.66;
     c.nSpin = 3; c.spins[0] = -0.35; c.spins[1] = 0.0; c.spins[2] = 0.3;
     c.nSafe = 20;
+    c.refMode = 0; c.refTau = 0.5; c.mxDirect = -1; c.mxPStar = -1; c.nEsc = 0; c.rootW = -1; c.foulGuard = true;
 }
 inline void botLight(BotCtx& c) { c.budget = c.noisy ? 300 : 120; c.K = 5; c.nSafe = 8; }
 
@@ -268,7 +277,7 @@ inline real valueOf(const BotCtx& c, const Game8& g, int p, int bih) {
     real z = c.nn ? mlpForward(c.nn, f) : heuristicLogit(f);
     return psigmoid(z);
 }
-inline real valueAfter(const BotCtx& c, const Game8& before, Game8& a) {
+inline real valueAfter(BotCtx& c, const Game8& before, Game8& a, const ShotParams*) {
     const int me = before.turn;
     endShot8(a);
     if (a.winner == me) return 1;
@@ -530,39 +539,206 @@ inline real snkVisit(const GameSnk& g, int bih) {
     if (!bih && !snkCanHit(g)) E -= 3.0;       // snookered: a foul (4+) is likely
     return E;
 }
-inline real valueAfterWin(const SnkEval& ev, const GameSnk& before, GameSnk& a) {
+// ================================================================ snooker referee (miss rule)
+// p* = chance that a player with this noise profile hits a ball on with the best
+// available escape (direct, one cushion, two cushions), found by simulation.
+enum { MISS_NONE = 0, MISS_DIRECT = 1, MISS_EXPECTED = 2, MISS_EFFORT = 3, MISS_PRO = 4, NOMISS_SNOOKERS = 5, NOMISS_HARD = 6 };
+struct RefInfo { int checked, miss, reason, direct, forfeit, escType, escR1, escR2; real pStar, pPlayed; };
+
+// does this stroke make first contact with a ball on? (simulates only until first contact)
+inline int snkFirstOn(const GameSnk& pre, const ShotParams& sp, const NoiseModel* nm, Rng* rng) {
+    Sim s = pre.sim; s.trackOrient = 0;
+    ShotParams q = sp;
+    if (nm) applyNoise(*nm, s.P, *rng, q);
+    strike(s, q.phi, q.V, q.a, q.b);
+    simulateFirstHit(s, 12);
+    int fh = s.ev.firstHit;
+    return (fh > 0 && snkOn(pre, fh)) ? 1 : 0;
+}
+inline real snkHitChance(const GameSnk& pre, const ShotParams& sp, const NoiseModel& nm, u64 seed, int K) {
+    int hits = 0;
+    for (int k = 0; k < K; ++k) { Rng r; r.seed(seed + 104729ULL * (u64)(k + 1)); hits += snkFirstOn(pre, sp, &nm, &r); }
+    return (real)hits / K;
+}
+// Escape families from a snooker: straight, one cushion, two cushions (aimed at mirror images
+// of the ball on). Each family's hitting window is scanned with partial simulations at speed V.
+// p = chance that a Gaussian aim error (the profile's sigma at that speed, at least minStep scan
+// steps, with the profile's aim tendency) lands in the window when aiming at phi. A floor on the
+// sigma centres the aim in the window for steady cueing.
+inline void snkMirror(const Sim& s, real& x, real& y, int r) {
+    const real hx = s.T.L / 2 - s.P.R, hy = s.T.W / 2 - s.P.R;
+    if (r == 0) x = 2 * hx - x; else if (r == 1) x = -2 * hx - x; else if (r == 2) y = 2 * hy - y; else y = -2 * hy - y;
+}
+// one family (type 0 straight, 1 cushion ra, 2 cushions ra then rb); returns 0 if nothing hits
+inline int snkEscWindow(const GameSnk& pre, const NoiseModel& nm, real V, real minStep, int tgt, int type, int ra, int rb, SnkEscFam& out, int& nPartial) {
+    const Sim& s = pre.sim; const real R = s.P.R;
+    const Ball& c = s.b[0]; const Ball& T = s.b[tgt];
+    real ix = T.x, iy = T.y;
+    if (type == 1) snkMirror(s, ix, iy, ra);
+    else if (type == 2) { snkMirror(s, ix, iy, rb); snkMirror(s, ix, iy, ra); }
+    real dx = ix - c.x, dy = iy - c.y, dist = psqrt(dx * dx + dy * dy);
+    if (dist < 1e-6) return 0;
+    real phiC = patan2(dy, dx), w = 2 * R / dist;
+    const int G = 9;
+    real phis[G]; int hit[G]; int any = 0;
+    ShotParams sp; sp.V = V; sp.a = 0; sp.b = 0;
+    for (int k = 0; k < G; ++k) {
+        phis[k] = phiC + (k - (G - 1) / 2) * w * 1.6 / ((G - 1) / 2);
+        sp.phi = phis[k];
+        hit[k] = snkFirstOn(pre, sp, 0, 0); any += hit[k];
+    }
+    nPartial += G;
+    if (!any) return 0;
+    const real dphi = phis[1] - phis[0];
+    real sig = noiseSigma(nm, 0, V / s.P.vmax);
+    if (sig < minStep * dphi) sig = minStep * dphi;
+    if (sig < 1e-9) sig = 1e-9;
+    real bp = 0, bphi = phis[0];
+    for (int k0 = 0; k0 < G; ++k0) {
+        real P = 0;
+        for (int k = 0; k < G; ++k) if (hit[k]) {
+            real z = (phis[k] - (phis[k0] - nm.mu[0])) / sig;
+            P += pexp(-0.5 * z * z);
+        }
+        P *= dphi / (2.5066282746310002 * sig);
+        if (P > 1) P = 1;
+        if (P > bp) { bp = P; bphi = phis[k0]; }
+    }
+    out.p = bp; out.phi = bphi; out.dphi = dphi; out.type = type; out.a = ra; out.b = rb; out.tgt = tgt;
+    return 1;
+}
+// the best maxF families over the nearest nT balls on (17 families each)
+inline int snkEscapeScan(const GameSnk& pre, const NoiseModel& nm, real V, real minStep, int nT, SnkEscFam* best, int maxF, int& nPartial) {
+    const Sim& s = pre.sim; const Ball& c = s.b[0];
+    int ids[22], n = 0;
+    for (int t = 1; t < s.n; ++t) if (snkOn(pre, t)) ids[n++] = t;
+    for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) {
+        real di = (s.b[ids[i]].x - c.x) * (s.b[ids[i]].x - c.x) + (s.b[ids[i]].y - c.y) * (s.b[ids[i]].y - c.y);
+        real dj = (s.b[ids[j]].x - c.x) * (s.b[ids[j]].x - c.x) + (s.b[ids[j]].y - c.y) * (s.b[ids[j]].y - c.y);
+        if (dj < di) { int t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
+    }
+    if (n > nT) n = nT;
+    int nb = 0;
+    for (int i = 0; i < n; ++i)
+        for (int f = 0; f < 17; ++f) {
+            int type, ra = -1, rb = -1;
+            if (f == 0) type = 0;
+            else if (f < 5) { type = 1; ra = f - 1; }
+            else { type = 2; int k = f - 5; ra = k / 3; rb = k % 3; if (rb >= ra) rb++; }
+            SnkEscFam fm;
+            if (!snkEscWindow(pre, nm, V, minStep, ids[i], type, ra, rb, fm, nPartial)) continue;
+            int slot = nb < maxF ? nb++ : -1;
+            if (slot < 0) { int lo = 0; for (int q = 1; q < maxF; ++q) if (best[q].p < best[lo].p) lo = q; if (best[lo].p < fm.p) slot = lo; }
+            if (slot >= 0) best[slot] = fm;
+        }
+    return nb;
+}
+// p* = chance of hitting a ball on with the best of the 4 best families (24 noisy partial sims each)
+inline real snkEscapeFrom(const GameSnk& pre, const NoiseModel& nm, u64 seed, const SnkEscFam* best, int nb, int& escType, int& r1, int& r2) {
+    escType = -1; r1 = r2 = -1;
+    real pStar = 0;
+    ShotParams sp; sp.V = 2.4; sp.a = 0; sp.b = 0;
+    for (int q = 0; q < nb; ++q) {
+        sp.phi = best[q].phi;
+        real p = snkHitChance(pre, sp, nm, seed + q * 31, 24);   // full noise: aim, strength, tip
+        if (p > pStar) { pStar = p; escType = best[q].type; r1 = best[q].a; r2 = best[q].b; }
+    }
+    return pStar;
+}
+inline real snkEscapeChance(const GameSnk& pre, const NoiseModel& nm, u64 seed, int& escType, int& r1, int& r2) {
+    SnkEscFam best[4]; int np = 0;
+    int nb = snkEscapeScan(pre, nm, 2.4, 0, 6, best, 4, np);
+    return snkEscapeFrom(pre, nm, seed, best, nb, escType, r1, r2);
+}
+
+// ---- the referee as the bot sees it (mirrors snkReferee), prepared once per decision
+inline void snkMissPrep(BotCtx& c, const Game8&) { c.mxDirect = 0; c.mxPStar = -1; c.nEsc = 0; c.rootW = -1; }
+inline void snkMissPrep(BotCtx& c, const GameSnk& g) {
+    c.mxDirect = -1; c.mxPStar = -1; c.nEsc = 0;
+    c.rootW = c.snk && c.snk->table ? snkWinNow(*c.snk, g, g.ballInHand) : -1;
+    if (g.ballInHand || g.isBreak) return;            // ball in hand: sight depends on the placement
+    c.mxDirect = snkDirectSight(g) ? 1 : 0;
+    const bool needP = !c.mxDirect && c.refMode == 0 && !snkNeedsSnookers(g, g.turn);
+    if (!needP && snkCanHit(g)) return;
+    // escape windows: shared by the escape candidates and p*
+    int np = 0;
+    c.nEsc = snkEscapeScan(g, c.nm, 2.4, 0.7, c.budget > 1500 ? 6 : 4, c.esc, 6, np);
+    c.used += 0.25 * np; c.nPartial += np;
+    if (needP) {
+        SnkEscFam b4[6]; int nb = c.nEsc;
+        for (int i = 0; i < nb; ++i) b4[i] = c.esc[i];
+        for (int i = 0; i < nb; ++i) for (int j = i + 1; j < nb; ++j) if (b4[j].p > b4[i].p) { SnkEscFam t = b4[i]; b4[i] = b4[j]; b4[j] = t; }
+        if (nb > 4) nb = 4;
+        int t, r1, r2;
+        c.mxPStar = snkEscapeFrom(g, c.nm, c.crnSeed ^ 0x2545F4914F6CDD1DULL, b4, nb, t, r1, r2);
+        c.used += 0.25 * 24 * nb; c.nPartial += 24 * nb;
+    }
+}
+// A miss puts the balls back: the foul is worth at most the position we started from, less a
+// fee for the penalty, which grows with consecutive misses (the third with a clear sight
+// loses the frame, see snkMissCalled).
+inline real snkMissFee(const GameSnk& pre) { return 0.02 * (1 + 2 * pre.missCount[pre.turn]); }
+// Would the referee call this failure to hit a ball on a miss? 0 no, 1 miss, 2 miss that
+// forfeits the frame (third in a row with a clear sight). `pre` = position as struck.
+inline int snkMissCalled(BotCtx& c, const GameSnk& pre, const GameSnk& a, const ShotParams* sp) {
+    if (!a.foulNoHit || a.practice) return 0;
+    const int me = pre.turn;
+    if (snkNeedsSnookers(pre, me) || snkNeedsSnookers(a, me)) return 0;
+    int direct = c.mxDirect;
+    if (direct < 0) direct = snkDirectSight(pre) ? 1 : 0;
+    if (direct) return pre.missCount[me] >= 2 ? 2 : 1;
+    if (c.refMode == 1) return 1;
+    if (pre.ballInHand) return 1;                      // we placed the cue ball there ourselves: escapes are easy to find
+    if (c.mxPStar < 0) return 0;
+    if (c.mxPStar >= c.refTau) return 1;
+    if (c.mxPStar >= 0.15 && sp) {                     // effort test: was it a real attempt?
+        c.used += 0.25; c.nPartial++;
+        if (!snkFirstOn(pre, *sp, 0, 0)) return 1;
+    }
+    return 0;
+}
+// After a foul the opponent picks their best option: play on (maybe with a free ball), put us
+// back in, or, after a miss, have the balls replaced so we face the same position again with
+// the penalty paid. `before` = position as struck, sp = the stroke as intended (effort test).
+inline real valueAfterWin(BotCtx& c, const GameSnk& before, GameSnk& a, const ShotParams* sp) {
+    const SnkEval& ev = *c.snk;
     const int me = before.turn;
     endShotSnk(a);
     if (a.winner >= 0) return a.winner == me ? 1 : 0;
     if (a.pendingChoice) {
-        // the opponent picks the best option for them
         GameSnk t = a; t.freeBall = a.freeAvail;
         real pPlay = snkWinNow(ev, t, t.ballInHand);
         GameSnk u = a; u.turn = me; u.freeBall = 0;
         real pBack = 1 - snkWinNow(ev, u, u.ballInHand);
         real pOpp = pmax(pPlay, pBack);
-        if (a.foulNoHit && snkDirectSight(before))      // a miss: they can make us play it again
-            pOpp = pmax(pOpp, snkWinNow(ev, t, t.ballInHand, 0.8 * a.foulPts));
+        int m = snkMissCalled(c, before, a, sp);
+        if (m == 2) return 0;
+        if (m) {
+            GameSnk r = before; r.score[0] = a.score[0]; r.score[1] = a.score[1];
+            pOpp = pmax(pOpp, 1 - snkWinNow(ev, r, r.ballInHand));
+            if (c.rootW >= 0) pOpp = pmax(pOpp, 1 - (c.rootW - snkMissFee(before)));
+        }
         return 1 - pOpp;
     }
     real w = snkWinNow(ev, a, a.ballInHand);
     return a.turn == me ? w : 1 - w;
 }
-inline real valueAfter(const BotCtx& c, const GameSnk& before, GameSnk& a) {
-    if (c.snk && c.snk->table) return valueAfterWin(*c.snk, before, a);
+inline real valueAfter(BotCtx& c, const GameSnk& before, GameSnk& a, const ShotParams* sp) {
+    if (c.snk && c.snk->table) return valueAfterWin(c, before, a, sp);
     const int me = before.turn, op = 1 - me;
     endShotSnk(a);
     real d = (a.score[me] - before.score[me]) - (a.score[op] - before.score[op]);
     if (a.winner >= 0) return d + (a.winner == me ? 40 : -40);
     if (a.pendingChoice) {
-        // after our foul the opponent picks the better of: play on (maybe with a free ball) / put us back in
+        // after our foul the opponent picks the best of: play on (maybe with a free ball) / put us back in / replace
         GameSnk t = a; t.freeBall = a.freeAvail;
         real ePlay = snkVisit(t, t.ballInHand);
         GameSnk u = a; u.turn = me; u.freeBall = 0;
         real eBack = snkVisit(u, u.ballInHand);
         real vOpp = pmax(ePlay, -eBack);
-        // a failure to hit with a clear sight of a ball on is always a miss: expect to be put back
-        if (a.foulNoHit && snkDirectSight(before)) vOpp = pmax(vOpp, 0.8 * a.foulPts);
+        int m = snkMissCalled(c, before, a, sp);
+        if (m == 2) return d - 40;
+        if (m) vOpp = pmax(vOpp, -snkVisit(before, before.ballInHand));
         return d - vOpp;
     }
     real E = snkVisit(a, a.ballInHand);
@@ -579,7 +755,7 @@ inline void prepShot(GameSnk& a, int tgt) {
 // ------------------------------------------------ search
 struct Cand {
     int place; real px, py; ShotParams sp;
-    int tgt, pk, kind;            // kind: 0 pot, 1 safety, 2 break
+    int tgt, pk, kind;            // kind: 0 pot, 1 safety, 2 break, 3 escape from a snooker
     real val; int level, done;
     real sV, sB, sA, sPhi;        // pattern-search step sizes
     real slope;                   // d(launch error)/d(phi) for warm-started secant
@@ -595,15 +771,16 @@ struct BotDecision {
 };
 
 template <class G> real simFull(BotCtx& c, const G& g, const Cand& cd, bool noisy, int k) {
-    G a = g;
-    a.sim.trackOrient = 0;
-    if (cd.place) resetBall(a.sim.b[0], cd.px, cd.py);
-    prepShot(a, cd.tgt);
+    G pre = g;
+    pre.sim.trackOrient = 0;
+    if (cd.place) resetBall(pre.sim.b[0], cd.px, cd.py);
+    prepShot(pre, cd.tgt);
+    G a = pre;
     if (noisy) { Rng r; r.seed(c.crnSeed + 7919ULL * (u64)(k + 1)); executeShot(a, cd.sp, true, c.nm, r); }
     else { strike(a.sim, cd.sp.phi, cd.sp.V, cd.sp.a, cd.sp.b); a.ballInHand = 0; }
     simulate(a.sim, SIM_DT, 25);
     c.used += 1; c.nFull++;
-    return valueAfter(c, g, a);
+    return valueAfter(c, pre, a, &cd.sp);
 }
 template <class G> real evaluate(BotCtx& c, const G& g, const Cand& cd, bool noisy) {
     if (!noisy) return simFull(c, g, cd, false, 0);
@@ -660,6 +837,62 @@ template <class G> void addPotPair(BotCtx& c, const G& g, CandList& L, real cx, 
     pushCand(L, cd);
 }
 
+// A stroke that, played as intended, fails to hit a ball on while the referee would call a miss
+// for it. Never the best choice: the balls are replaced and we pay the penalty for the same
+// position. (An effort-test miss needs p* >= 0.15; a cue ball placed in a snooker counts as a
+// miss; the striker must not need snookers after the minimum penalty either.)
+inline bool snkDeliberateFoul(BotCtx&, const Game8&, const Cand&) { return false; }
+inline bool snkDeliberateFoul(BotCtx& c, const GameSnk& g, const Cand& cd) {
+    if (cd.done == 2) return true;
+    if (g.practice) return false;
+    const int me = g.turn;
+    if (g.score[1 - me] + 4 - g.score[me] > snkRemaining(g)) return false;
+    GameSnk pre = g;
+    if (cd.place) resetBall(pre.sim.b[0], cd.px, cd.py);
+    prepShot(pre, cd.tgt);
+    int direct = c.mxDirect;                       // ball in hand: sight from this placement
+    if (cd.place || direct < 0) direct = snkDirectSight(pre) ? 1 : 0;
+    if (!(direct == 1 || c.refMode == 1 || cd.place || c.mxPStar >= 0.15)) return false;
+    c.used += 0.25; c.nPartial++;
+    return !snkFirstOn(pre, cd.sp, 0, 0);
+}
+
+inline real missFee(const Game8&) { return 0; }
+inline real missFee(const GameSnk& g) { return snkMissFee(g); }
+
+// does a random safety make first contact with a ball on, played as intended? (snooker only)
+inline bool safetyHitsOn(BotCtx&, const Game8&, const Cand&) { return true; }
+inline bool safetyHitsOn(BotCtx& c, const GameSnk& g, const Cand& cd) {
+    GameSnk pre = g;
+    if (cd.place) resetBall(pre.sim.b[0], cd.px, cd.py);
+    prepShot(pre, cd.tgt);
+    c.used += 0.25; c.nPartial++;
+    return snkFirstOn(pre, cd.sp, 0, 0) != 0;
+}
+
+// escapes from a snooker: the best hitting windows at three speeds, refined like safeties
+inline void addEscapes(BotCtx&, const Game8&, CandList&) {}
+inline void addEscapes(BotCtx& c, const GameSnk& g, CandList& L) {
+    if (!c.nEsc || g.ballInHand || snkCanHit(g)) return;
+    const Sim& s = g.sim;
+    const real Vs[3] = {2.4, 1.5, 3.6};
+    for (int iv = 0; iv < 3; ++iv)
+        for (int q = 0; q < c.nEsc; ++q) {
+            SnkEscFam f = c.esc[q];
+            if (iv > 0) {        // re-centre the window at this speed (cushions throw differently)
+                int np = 0;
+                int ok = snkEscWindow(g, c.nm, Vs[iv], 0.7, f.tgt, f.type, f.a, f.b, f, np);
+                c.used += 0.25 * np; c.nPartial += np;
+                if (!ok) continue;
+            }
+            Cand cd; cd.place = 0; cd.px = s.b[0].x; cd.py = s.b[0].y; cd.tgt = f.tgt; cd.pk = -1; cd.kind = 3;
+            cd.sp.phi = f.phi; cd.sp.V = Vs[iv]; cd.sp.a = 0; cd.sp.b = 0;
+            cd.level = 0; cd.done = 0; cd.sV = 0.15; cd.sB = 0.2; cd.sA = 0; cd.sPhi = 0.5 * f.dphi; cd.slope = 0;
+            cd.val = evaluate(c, g, cd, false);
+            pushCand(L, cd);
+        }
+}
+
 template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
     static CandList L;
     L.n = 0;
@@ -681,6 +914,7 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
         if (c.noisy) c.K = (int)pmin(24, 8 * pexp(plog(sc) / 3));
     }
     const real p1Budget = c.phase2 ? c.budget * 0.5 : c.budget;
+    snkMissPrep(c, g);
 
     // ---- 8-ball break: hit the apex at full power from a few spots
     bool did = false;
@@ -749,18 +983,24 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
         int legal[22], nl = 0;
         for (int t = 1; t < s.n; ++t) if (legalT(g, t)) legal[nl++] = t;
         for (int i = 0; i < nSafe && nl; ++i) {
-            const Pos& P = pos[c.rng.below(np)];
-            int t = legal[c.rng.below(nl)];
-            real dx = s.b[t].x - P.x, dy = s.b[t].y - P.y, dd = psqrt(dx * dx + dy * dy);
-            if (dd < 1e-6) continue;
-            real mo = 2 * R / dd; if (mo > 1) mo = 1;
-            Cand cd; cd.place = P.place; cd.px = P.x; cd.py = P.y; cd.tgt = t; cd.pk = -1; cd.kind = 1;
-            cd.sp.phi = patan2(dy, dx) + c.rng.uniform(-0.95, 0.95) * patan(mo);
-            cd.sp.V = powerToSpeed(s.P, c.rng.uniform(0.15, 0.5)); cd.sp.a = 0; cd.sp.b = c.rng.uniform(-0.3, 0.2);
-            cd.level = 0; cd.done = 0; cd.sV = 0.25; cd.sB = 0.2; cd.sA = 0; cd.sPhi = 0.25 * patan(mo); cd.slope = 0;
+            Cand cd; bool ok = false;
+            for (int tries = 0; tries < 4 && !ok; ++tries) {   // snooker: redraw safeties that would foul first contact
+                const Pos& P = pos[c.rng.below(np)];
+                int t = legal[c.rng.below(nl)];
+                real dx = s.b[t].x - P.x, dy = s.b[t].y - P.y, dd = psqrt(dx * dx + dy * dy);
+                if (dd < 1e-6) break;
+                real mo = 2 * R / dd; if (mo > 1) mo = 1;
+                cd.place = P.place; cd.px = P.x; cd.py = P.y; cd.tgt = t; cd.pk = -1; cd.kind = 1;
+                cd.sp.phi = patan2(dy, dx) + c.rng.uniform(-0.95, 0.95) * patan(mo);
+                cd.sp.V = powerToSpeed(s.P, c.rng.uniform(0.15, 0.5)); cd.sp.a = 0; cd.sp.b = c.rng.uniform(-0.3, 0.2);
+                cd.level = 0; cd.done = 0; cd.sV = 0.25; cd.sB = 0.2; cd.sA = 0; cd.sPhi = 0.25 * patan(mo); cd.slope = 0;
+                ok = safetyHitsOn(c, g, cd) || tries == 3;
+            }
+            if (!ok) continue;
             cd.val = evaluate(c, g, cd, false);
             pushCand(L, cd);
         }
+        addEscapes(c, g, L);
         // pass C: power / spin variants of the best pots
         for (int i = 0; i < nPots; ++i) {   // sort pots by value
             int bi = i; for (int j = i + 1; j < nPots; ++j) if (L.c[j].val > L.c[bi].val) bi = j;
@@ -801,6 +1041,7 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
         c.nRefine++;
         if (cd.level == 0) {
             if (cd.kind == 0 && !centreAim(c, gp, cd, 3)) { cd.done = 1; cd.val = -1e9; continue; }
+            if (c.foulGuard && c.nEsc && snkDeliberateFoul(c, g, cd)) { cd.done = 2; continue; }   // snookered: spend the budget on real attempts
             cd.val = evaluate(c, gp, cd, c.noisy);
             cd.level = 1;
             continue;
@@ -847,12 +1088,24 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
             for (int q = 0; q < m && c.used < c.budget; ++q) { sum[q] += simFull(c, g, L.c[idx[q]], true, k); ns[q]++; }
         for (int q = 0; q < m; ++q) L.c[idx[q]].val = sum[q] / ns[q];
     }
-    // ---- choose: noisy -> best among noise-evaluated candidates
+    // ---- choose: noisy -> best among noise-evaluated candidates. A deliberate foul into a miss
+    // (done == 2) is worth at most the best real attempt less the miss fee: replaying the same
+    // position cannot be better than the best way to play it. So one is chosen only if there is
+    // no real attempt at all. This is the searched form of the root cap in valueAfterWin (rootW is
+    // the evaluator's guess of the same value); with an accurate evaluator the two agree and this
+    // never binds. Training labels are frame results, so it changes only which strokes are played.
     int best = -1;
-    for (int i = 0; i < L.n; ++i) {
-        if (c.noisy && c.phase2 && L.c[i].level == 0) continue;
-        if (best < 0 || L.c[i].val > L.c[best].val) best = i;
-    }
+    for (int pass = 0; pass < 2 && best < 0; ++pass)
+        for (int tries = 0; tries < L.n; ++tries) {
+            best = -1;
+            for (int i = 0; i < L.n; ++i) {
+                if (L.c[i].done == 2 || (pass == 0 && c.noisy && c.phase2 && L.c[i].level == 0)) continue;
+                if (best < 0 || L.c[i].val > L.c[best].val) best = i;
+            }
+            if (best < 0 || !c.foulGuard || !snkDeliberateFoul(c, g, L.c[best])) break;
+            L.c[best].done = 2;
+        }
+    if (best >= 0 && c.foulGuard) { const real cap = L.c[best].val - missFee(g); for (int i = 0; i < L.n; ++i) if (L.c[i].done == 2 && L.c[i].val > cap) L.c[i].val = cap; }
     if (best < 0) { best = 0; for (int i = 1; i < L.n; ++i) if (L.c[i].val > L.c[best].val) best = i; }
     const Cand& b = L.c[best];
     d.place = b.place; d.px = b.px; d.py = b.py; d.sp = b.sp; d.value = b.val; d.tgt = b.tgt; d.kind = b.kind; d.pk = b.pk;
@@ -862,94 +1115,6 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
 
 inline bool breakShot(const Game8& g) { return g.isBreak != 0; }
 
-// ================================================================ snooker referee (miss rule)
-// p* = chance that a player with this noise profile hits a ball on with the best
-// available escape (direct, one cushion, two cushions), found by simulation.
-enum { MISS_NONE = 0, MISS_DIRECT = 1, MISS_EXPECTED = 2, MISS_EFFORT = 3, MISS_PRO = 4, NOMISS_SNOOKERS = 5, NOMISS_HARD = 6 };
-struct RefInfo { int checked, miss, reason, direct, forfeit, escType, escR1, escR2; real pStar, pPlayed; };
-
-// does this stroke make first contact with a ball on? (simulates only until first contact)
-inline int snkFirstOn(const GameSnk& pre, const ShotParams& sp, const NoiseModel* nm, Rng* rng) {
-    Sim s = pre.sim; s.trackOrient = 0;
-    ShotParams q = sp;
-    if (nm) applyNoise(*nm, s.P, *rng, q);
-    strike(s, q.phi, q.V, q.a, q.b);
-    simulateFirstHit(s, 12);
-    int fh = s.ev.firstHit;
-    return (fh > 0 && snkOn(pre, fh)) ? 1 : 0;
-}
-inline real snkHitChance(const GameSnk& pre, const ShotParams& sp, const NoiseModel& nm, u64 seed, int K) {
-    int hits = 0;
-    for (int k = 0; k < K; ++k) { Rng r; r.seed(seed + 104729ULL * (u64)(k + 1)); hits += snkFirstOn(pre, sp, &nm, &r); }
-    return (real)hits / K;
-}
-inline real snkEscapeChance(const GameSnk& pre, const NoiseModel& nm, u64 seed, int& escType, int& r1, int& r2) {
-    const Sim& s = pre.sim; const real R = s.P.R;
-    const real hx = s.T.L / 2 - R, hy = s.T.W / 2 - R;
-    const Ball& c = s.b[0];
-    escType = -1; r1 = r2 = -1;
-    // nearest balls on (up to 6)
-    int ids[22], n = 0;
-    for (int t = 1; t < s.n; ++t) if (snkOn(pre, t)) ids[n++] = t;
-    for (int i = 0; i < n; ++i) for (int j = i + 1; j < n; ++j) {
-        real di = (s.b[ids[i]].x - c.x) * (s.b[ids[i]].x - c.x) + (s.b[ids[i]].y - c.y) * (s.b[ids[i]].y - c.y);
-        real dj = (s.b[ids[j]].x - c.x) * (s.b[ids[j]].x - c.x) + (s.b[ids[j]].y - c.y) * (s.b[ids[j]].y - c.y);
-        if (dj < di) { int t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
-    }
-    if (n > 6) n = 6;
-    auto mir = [&](real& x, real& y, int r) {
-        if (r == 0) x = 2 * hx - x; else if (r == 1) x = -2 * hx - x; else if (r == 2) y = 2 * hy - y; else y = -2 * hy - y;
-    };
-    struct Fam { real p, phi; int type, a, b; } best[4]; int nb = 0;
-    const real V = 2.4;
-    const real sig = noiseSigma(nm, 0, V / s.P.vmax);
-    ShotParams sp; sp.V = V; sp.a = 0; sp.b = 0;
-    for (int i = 0; i < n; ++i) {
-        const Ball& T = s.b[ids[i]];
-        for (int f = 0; f < 17; ++f) {
-            int type, ra = -1, rb = -1;
-            real ix = T.x, iy = T.y;
-            if (f == 0) type = 0;
-            else if (f < 5) { type = 1; ra = f - 1; mir(ix, iy, ra); }
-            else { type = 2; int k = f - 5; ra = k / 3; rb = k % 3; if (rb >= ra) rb++; mir(ix, iy, rb); mir(ix, iy, ra); }
-            real dx = ix - c.x, dy = iy - c.y, dist = psqrt(dx * dx + dy * dy);
-            if (dist < 1e-6) continue;
-            real phiC = patan2(dy, dx), w = 2 * R / dist;
-            const int G = 9;
-            real phis[G]; int hit[G]; int any = 0;
-            for (int k = 0; k < G; ++k) {
-                phis[k] = phiC + (k - (G - 1) / 2) * w * 1.6 / ((G - 1) / 2);
-                sp.phi = phis[k];
-                hit[k] = snkFirstOn(pre, sp, 0, 0); any += hit[k];
-            }
-            if (!any) continue;
-            // chance that a Gaussian aim error (sigma, tendency mu) lands in the hitting window
-            const real dphi = phis[1] - phis[0];
-            real bp = 0, bphi = phis[0];
-            for (int k0 = 0; k0 < G; ++k0) {
-                real P = 0;
-                for (int k = 0; k < G; ++k) if (hit[k]) {
-                    real z = (phis[k] - (phis[k0] - nm.mu[0])) / (sig > 1e-9 ? sig : 1e-9);
-                    P += pexp(-0.5 * z * z);
-                }
-                P *= dphi / (2.5066282746310002 * (sig > 1e-9 ? sig : 1e-9));
-                if (P > 1) P = 1;
-                if (P > bp) { bp = P; bphi = phis[k0]; }
-            }
-            // keep the 4 best families
-            int slot = nb < 4 ? nb++ : -1;
-            if (slot < 0) { int lo = 0; for (int q = 1; q < 4; ++q) if (best[q].p < best[lo].p) lo = q; if (best[lo].p < bp) slot = lo; }
-            if (slot >= 0) { best[slot].p = bp; best[slot].phi = bphi; best[slot].type = type; best[slot].a = ra; best[slot].b = rb; }
-        }
-    }
-    real pStar = 0;
-    for (int q = 0; q < nb; ++q) {
-        sp.phi = best[q].phi;
-        real p = snkHitChance(pre, sp, nm, seed + q * 31, 24);   // full noise: aim, strength, tip
-        if (p > pStar) { pStar = p; escType = best[q].type; r1 = best[q].a; r2 = best[q].b; }
-    }
-    return pStar;
-}
 // mode 0: judged by profile (expected-hit threshold tau + effort test), mode 1: pro rules
 inline void snkReferee(const GameSnk& pre, GameSnk& g, const ShotParams& intended, const NoiseModel& nm, int mode, real tau, u64 seed, RefInfo& ri) {
     ri.checked = ri.miss = ri.reason = ri.direct = ri.forfeit = 0; ri.escType = ri.escR1 = ri.escR2 = -1; ri.pStar = ri.pPlayed = -1;
@@ -975,16 +1140,26 @@ inline void snkReferee(const GameSnk& pre, GameSnk& g, const ShotParams& intende
         } else g.missCount[me] = 0;
     } else g.missCount[me] = 0;
 }
-// the incoming player's best option after a foul; vals[0..2] = play / put back / replace
-inline int snkBotChoose(const GameSnk& g, real pStarHint, real* vals) {
-    vals[0] = vals[1] = vals[2] = -1e9;
-    GameSnk t = g; t.freeBall = g.freeAvail;
-    vals[0] = snkVisit(t, t.ballInHand);
-    if (g.pendingChoice & CH_PUTBACK) { GameSnk u = g; u.turn = g.offender; u.freeBall = 0; vals[1] = -snkVisit(u, u.ballInHand); }
-    if (g.pendingChoice & CH_REPLACE) { real p = pStarHint < 0 ? 0.9 : pStarHint; vals[2] = (1 - p) * (g.foulPts > 0 ? g.foulPts : 4) - p * 1.5; }
-    int best = CH_PLAY; real bv = vals[0];
-    if (vals[1] > bv) { bv = vals[1]; best = CH_PUTBACK; }
-    if (vals[2] > bv) { bv = vals[2]; best = CH_REPLACE; }
+// The incoming player's decision after a foul (`pre` = position as struck). Each available
+// option is searched from the chooser's view with a quarter of the context's budget (100-1500
+// simulations), so a replaced snooker is judged by how well the offender can actually escape.
+// vals[0..2] = play / put back / replace: win chance for the chooser (points with the legacy
+// evaluator), -1e9 if not available.
+inline int snkChooseOption(const BotCtx& proto, const GameSnk& g, const GameSnk& pre, real* vals) {
+    const int opts[3] = {CH_PLAY, CH_PUTBACK, CH_REPLACE};
+    const int chooser = g.turn;
+    const bool win = proto.snk && proto.snk->table;
+    int best = CH_PLAY; real bv = -1e18;
+    for (int i = 0; i < 3; ++i) {
+        vals[i] = -1e9;
+        if (!(g.pendingChoice & opts[i])) continue;
+        GameSnk x = g; snkApplyChoice(x, pre, opts[i]);
+        BotCtx c = proto; c.budget = pclamp(proto.budget * 0.25, 100, 1500);
+        BotDecision d; botThink(c, x, d);
+        real v = x.turn == chooser ? d.value : (win ? 1 - d.value : -d.value);
+        vals[i] = v;
+        if (v > bv) { bv = v; best = opts[i]; }
+    }
     return best;
 }
 inline bool breakShot(const GameSnk&) { return false; }

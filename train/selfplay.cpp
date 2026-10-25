@@ -91,7 +91,10 @@ int main(int argc, char** argv) {
                 }
                 if (g.pendingChoice && g.winner < 0) {
                     RefInfo ri; snkReferee(pre, g, d.sp, nm, 0, 0.5, gseed + shots, ri);
-                    if (g.winner < 0 && g.pendingChoice) { real v[3]; snkApplyChoice(g, pre, snkBotChoose(g, ri.pStar, v)); }
+                    if (g.winner < 0 && g.pendingChoice) {
+                        BotCtx cc; botDefaults(cc, noisy, 0, gseed * 37 + shots); cc.budget = budget; cc.nm = nm; cc.snk = &se.ev;
+                        real v[3]; snkApplyChoice(g, pre, snkChooseOption(cc, g, pre, v));
+                    }
                 }
                 visitStart = g.turn != lastTurn || g.lastFoul; lastTurn = g.turn;
             }
