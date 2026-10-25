@@ -435,7 +435,7 @@ template <class G> int launchErr(BotCtx& c, const G& g, const Cand& cd, real phi
     s.trackOrient = 0;
     if (cd.place) resetBall(s.b[0], cd.px, cd.py);
     strike(s, phi, cd.sp.V, cd.sp.a, cd.sp.b);
-    while (s.ev.firstHit < 0 && anyMoving(s) && s.t < 8) step(s, SIM_DT);
+    simulateFirstHit(s, 8);
     c.used += 0.25; c.nPartial++;
     if (s.ev.firstHit != cd.tgt) return 0;
     const Ball& B = s.b[cd.tgt];
@@ -660,7 +660,7 @@ inline int snkFirstOn(const GameSnk& pre, const ShotParams& sp, const NoiseModel
     ShotParams q = sp;
     if (nm) applyNoise(*nm, s.P, *rng, q);
     strike(s, q.phi, q.V, q.a, q.b);
-    while (s.ev.firstHit < 0 && anyMoving(s) && s.t < 12) step(s, SIM_DT);
+    simulateFirstHit(s, 12);
     int fh = s.ev.firstHit;
     return (fh > 0 && snkOn(pre, fh)) ? 1 : 0;
 }

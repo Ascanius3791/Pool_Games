@@ -100,8 +100,8 @@ inline void rack8(Game8& g) {
     pos = 0;
     for (int r = 0; r < 5; ++r)
         for (int c = 0; c <= r; ++c, ++pos) {
-            real x = fx + r * rowDx + g.rng.uniform(-1, 1) * 0.00003;
-            real y = (c - r * 0.5) * d + g.rng.uniform(-1, 1) * 0.00003;
+            real x = fx + r * rowDx + g.rng.uniform(-1, 1) * 0.000015;
+            real y = (c - r * 0.5) * d + g.rng.uniform(-1, 1) * 0.000015;
             resetBall(s.b[ids[pos]], x, y);
         }
     resetBall(s.b[0], headStringX(s.T) - 0.15, 0);

@@ -517,8 +517,10 @@ inline void strike(Sim& s, real phi, real V, real a, real b) {
     s.nSnd = 0;
 }
 
-// Simulate until rest (or tmax). Returns simulated time.
-inline real simulate(Sim& s, real dt = SIM_DT, real tmax = 60) {
+// Fixed-step simulation until rest (or tmax). Returns simulated time. The game and the bots
+// use the event-driven engine (events.h, simulate()); this stepper is the reference it is
+// validated against (tests/ev_test.cpp) and is used when POOL_STEPPER is defined.
+inline real simulateStep(Sim& s, real dt = SIM_DT, real tmax = 60) {
     while (anyMoving(s) && s.t < tmax) step(s, dt);
     for (int i = 0; i < s.n; ++i) { s.b[i].wz = 0; s.b[i].vx = s.b[i].vy = 0; s.b[i].wx = s.b[i].wy = 0; }
     s.ev.tEnd = s.t;
@@ -627,3 +629,5 @@ inline void applyNoise(const NoiseModel& n, const Params& P, Rng& rng, ShotParam
 }
 
 } // namespace pool
+
+#include "events.h"   // simulate(), simulateFirstHit()

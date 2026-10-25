@@ -41,6 +41,8 @@ static NoiseModel NM;
 static Rng shotRng;
 static double OUT[1024];
 static double accum = 0;
+static EvEngine LIVE;          // the shot in progress (event-driven), advanced frame by frame
+static int liveOn = 0;
 
 static Sim& SIM() { return TYPE ? GS.sim : G8.sim; }
 
@@ -56,6 +58,7 @@ EXPORT(newGame) void newGame(double seed, int practice, int type) {
     defaultNoise(NM);
     shotRng.seed((u64)seed * 7919 + 17);
     accum = 0;
+    liveOn = 0;
 }
 
 // Visible state -> OUT. Header [0..15], balls from 16 (12 doubles each), snooker block at 300.
@@ -135,6 +138,7 @@ static void shootParams(ShotParams sp, int noisy) {
     else miscue = executeShot(G8, sp, noisy != 0, NM, shotRng, &ex);
     OUT[0] = ex.phi; OUT[1] = ex.V; OUT[2] = ex.a; OUT[3] = ex.b; OUT[4] = miscue;
     accum = 0;
+    LIVE.logOn = 0; evInit(LIVE, SIM()); liveOn = 1;
 }
 EXPORT(shoot) void shoot(double phi, double power, double a, double b, int noisy) {
     ShotParams sp; sp.phi = phi; sp.V = powerToSpeed(SIM().P, power); sp.a = a; sp.b = b;
@@ -176,18 +180,19 @@ EXPORT(botThink) void botThink(int noisy, int useNN, double budget) {
     OUT[16] = d.tgt;
 }
 
-// Advance by frame time (seconds) in fixed SIM_DT substeps. Returns 1 while moving.
+// Advance the shot in progress by frameDt seconds (event-driven: all events up to that
+// time are processed, then every ball is placed on its analytic trajectory). The result does
+// not depend on how the time is split into frames, so it is identical to the bots' sims.
+// Returns 1 while moving.
 EXPORT(advance) int advance(double frameDt) {
     Sim& s = SIM();
     s.nSnd = 0;
-    accum += frameDt;
-    int moving = anyMoving(s);
-    while (accum >= SIM_DT && moving) {
-        step(s, SIM_DT);
-        accum -= SIM_DT;
-        moving = anyMoving(s);
+    if (!liveOn) {
+        if (!anyMoving(s)) return 0;
+        LIVE.logOn = 0; evInit(LIVE, s); liveOn = 1;
     }
-    if (!moving) accum = 0;
+    int moving = evRun(LIVE, s, LIVE.tDisp + frameDt, 0);
+    if (!moving) liveOn = 0;
     OUT[600] = s.nSnd;
     for (int i = 0; i < s.nSnd; ++i) {
         OUT[601 + 4 * i] = s.snd[i].type; OUT[602 + 4 * i] = s.snd[i].strength;
@@ -198,6 +203,7 @@ EXPORT(advance) int advance(double frameDt) {
 
 EXPORT(endShot) void endShot() {
     Sim& s = SIM();
+    liveOn = 0;
     for (int i = 0; i < s.n; ++i) { Ball& b = s.b[i]; b.vx = b.vy = b.wx = b.wy = b.wz = 0; }
     s.ev.tEnd = s.t;
     const Events e = s.ev;
@@ -235,7 +241,7 @@ EXPORT(nomGuess) int nomGuess(double phi, double power, double a, double b, int 
         applyNoise(nm, GS.sim.P, r, sp);
         Sim s = GS.sim; s.trackOrient = 0;
         strike(s, sp.phi, sp.V, sp.a, sp.b);
-        while (s.ev.firstHit < 0 && anyMoving(s) && s.t < 12) step(s, SIM_DT);
+        simulateFirstHit(s, 12);
         int fh = s.ev.firstHit;
         int j = 0; while (j < nd && ids[j] != fh) ++j;
         if (j == nd && nd < 24) { ids[nd] = fh; cnt[nd] = 0; nd++; }

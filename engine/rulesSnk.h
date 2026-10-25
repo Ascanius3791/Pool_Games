@@ -185,8 +185,8 @@ inline void rackSnooker(GameSnk& g) {
     int id = 1;
     for (int r = 0; r < 5; ++r)
         for (int c = 0; c <= r; ++c) {
-            real x = ax + r * rowDx + g.rng.uniform(-1, 1) * 0.00003;
-            real y = (c - r * 0.5) * d + g.rng.uniform(-1, 1) * 0.00003;
+            real x = ax + r * rowDx + g.rng.uniform(-1, 1) * 0.000015;
+            real y = (c - r * 0.5) * d + g.rng.uniform(-1, 1) * 0.000015;
             resetBall(s.b[id++], x, y);
         }
     resetBall(s.b[0], G.baulkX - 0.10, -0.18);   // in the D, brown/yellow side

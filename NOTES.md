@@ -60,6 +60,15 @@
   - Arena: 8noisy 63-67 (-11 +- 60 Elo); snooker win table vs legacy 14-11 (+42 +- 146).
   - Nothing accepted, so the game is unchanged. The data is delivered as selfplay-data-local1.tar.gz.
 
+- v9 (2026-10-25): event-driven physics engine (engine/events.h)
+  - Analytic trajectories between events: sliding parabola, rolling line, rest; wz decays analytically. Events: phase changes, ball-ball and jaw-nose contacts (quartics), rail/facing lines and pocket capture (quadratics, closed form). Roots: polynomial split at critical points into monotone pieces, first decreasing piece reaching <= 0 = entry (Illinois regula falsi). Bezier-triangle and bounding-box culls.
+  - Ordering: always the earliest event; every prediction of a ball is recomputed when its state changes; simultaneous events processed one after another in a fixed order. Contacts end separating at >= 1 mm/s (Zeno guard), cap 6000 events/shot.
+  - Same collision responses as physics.h. simulate()/simulateFirstHit() now use it (POOL_STEPPER selects the old stepper, kept as simulateStep for reference). wasm advance() runs the live shot frame by frame; results are bit-identical to a single-call simulation.
+  - Validation (tests/ev_test.cpp, vs 20 us stepper): jaw grid 4347/4347 pot outcomes agree (4 ms stepper: 4341); object balls near pockets 561/561; invariants over 1500 shots (snooker + pool, frozen balls, balls in jaws): no overlap, no penetration, no energy gain.
+  - Bugs found and fixed on the way: rail contacts missed after a ball came out of the pocket mouth (old 5 mm "behind" skip), overlapping-and-approaching pairs ignored, both racks had up to 25 um initial overlaps (jitter reduced to 15 um).
+  - Speed: snooker shot ~55 us vs ~1.1 ms (about 20x), first-contact partial sims about 55x, bot decision at budget 400: 0.17 s -> 0.006 s native. The referee went from 50-200 ms to about 1 ms.
+  - Middle pockets: the 1 cm "left the table" net acts before the 1.0R capture depth (same in both engines); kept for identical pocket behaviour.
+
 ## Strategy gaps and training plan (discussed 2026-10-24)
 - The bot looks one shot ahead plus a static evaluation, so it has no multi-visit planning.
 - The snooker value is linear in points (points this shot ± expected next visit). It ignores score context, so it does not play for snookers when it needs them and does not tighten up when far ahead. The 'snookered' term is a flat -3.
@@ -108,5 +117,5 @@ Simplified WPA with no called pockets. Open table after the break. The first leg
 - Browser: about 0.15 s per decision (std) and 0.3 s (noisy) in WASM.
 
 ## Files (in the project as src/...)
-engine/pmath.h, engine/physics.h, engine/rules8.h, engine/rulesSnk.h, engine/bot.h, engine/wasm_api.cpp, web/template.html, build.sh, tests/test_physics.cpp, train/train.cpp, train/out/*_weights.h, tests/bot_test.cpp, tests/match.cpp.
+engine/pmath.h, engine/physics.h, engine/events.h, engine/rules8.h, engine/rulesSnk.h, engine/bot.h, engine/wasm_api.cpp, web/template.html, build.sh, tests/test_physics.cpp, train/train.cpp, train/out/*_weights.h, tests/bot_test.cpp, tests/match.cpp.
 build.sh needs `npm i three@0.128.0 binaryen@116.0.0` in build/npm for the local test harness and wasm2js.
