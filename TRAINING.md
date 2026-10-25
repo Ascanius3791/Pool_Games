@@ -95,7 +95,7 @@ HOURS=8 ./train/run_pipeline.sh                # the real run
 | `FEAT` | `feat` | feature cache for the net (rebuilt from `data/` when missing) |
 | `BEST_FROM` | – | continue from a previous run's `runs/<stamp>/best` |
 | `SP_MIX` | `break:4 random:1 snookers:1 lead:0.5 snookered:1 freeball:0.5 safety:1 clearance:1 black:0.5 perturbed:1` | snooker self-play starting positions (family:weight); empty = the old 50% break / 50% random |
-| `ARENA_SUITE` | `break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:1 perturbed:1` | starting positions of the snooker arena pairs; empty = every pair from the break |
+| `ARENA_SUITE` | `break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:0.5 perturbed:1` | starting positions of the snooker arena pairs; empty = every pair from the break |
 | `POS_FROM` | `data/snk` | where the `perturbed` family takes its real positions from (`*.posrec`, a sample of 20k) |
 
 Throughput since the event-driven engine (v9/v10, about 20–25× faster simulation): snooker about 60–70 frames/min per core at budget 2000 with human error (about 3,500 positions/min, half of the frames start mid-frame). One 25-minute self-play phase on 4 cores gives about 6,000 frames / 350k positions; a 5-hour run about 2–3 million positions. Disk: about 100 bytes per position (raw records) plus about 40 for the tuning records.
@@ -159,6 +159,23 @@ train/bin/arena --game snk ... --suite "break:2 snookers:1 lead:1 ..." [--pos-fr
 build/positions_test [--n 2000 --shots 150 --pos-from data/snk]          # validity
 build/positions_test --demo snookers --n 12 --budget 2000                # first decisions, net vs linear
 ```
+
+**First measurements** (net v2 vs the linear evaluator, both on the win table, skill 1.0, budget 2000, `--suite all`, paired games; columns: games, net–linear, pairs swept by the net / split / swept by the linear evaluator, share won by the side to move at the start):
+
+| family | branch engine (724 games) | | | main's engine with escapes, 25 Oct 16:00 (410 games) | | |
+|---|---|---|---|---|---|---|
+| break | 60–16 | 24/12/2 | 45% | 27–17 | 10/7/5 | 48% |
+| random | 44–28 | 11/22/3 | 53% | 25–17 | 5/15/1 | 57% |
+| snookers | 48–24 | 12/24/0 | 19% | 20–22 | 1/18/2 | 7% |
+| lead | 50–22 | 14/22/0 | 81% | 26–16 | 5/16/0 | 88% |
+| snookered | 48–24 | 17/14/5 | 44% | 23–19 | 4/15/2 | 33% |
+| freeball | 46–26 | 13/20/3 | 47% | 27–15 | 7/13/1 | 38% |
+| safety | 58–14 | 23/12/1 | 53% | 31–11 | 10/11/0 | 52% |
+| clearance | 49–23 | 15/19/2 | 46% | 25–13 | 7/11/1 | 47% |
+| black | 36–36 | 6/24/6 | 56% | 17–21 | 1/15/3 | 47% |
+| perturbed | 44–28 | 8/28/0 | 56% | 22–16 | 4/14/1 | 55% |
+
+`black` frames last about 5 shots and are mostly luck (two thirds of the pairs split), so it has half weight in `ARENA_SUITE`. `snookers`/`lead` pairs are mostly split (the trailing side loses both games), so they say little about strength but show whether a comeback is possible at all.
 
 A spec is `family:weight` separated by spaces or commas (a bare name = 1, `all` = every family). Self-play draws each frame's family at random by weight; the arena interleaves them deterministically (smooth weighted round robin), so a short arena still covers every family and both candidates see the same positions. Only frames from `break` and `random` write shot statistics (`*.stats`), so the abstract simulator stays calibrated on natural play. The `.games` tuning records and the raw positions include every family.
 

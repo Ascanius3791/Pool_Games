@@ -33,7 +33,7 @@ NET_EPOCHS=${NET_EPOCHS:-3}    # passes over all snooker positions per iteration
 FEAT=${FEAT:-feat}             # feature cache for the net (rebuilt from data/ when missing)
 # snooker starting positions (train/positions.h). SP_MIX="" restores the old 50% break / 50% random.
 SP_MIX=${SP_MIX-"break:4 random:1 snookers:1 lead:0.5 snookered:1 freeball:0.5 safety:1 clearance:1 black:0.5 perturbed:1"}
-ARENA_SUITE=${ARENA_SUITE-"break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:1 perturbed:1"}
+ARENA_SUITE=${ARENA_SUITE-"break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:0.5 perturbed:1"}
 POS_FROM=${POS_FROM:-data/snk}  # real positions for the 'perturbed' family (a sample of them)
 
 mkdir -p "$RUN/best" data/8std data/8noisy data/snk "$FEAT"
