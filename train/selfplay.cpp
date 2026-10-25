@@ -2,42 +2,16 @@
 //
 // usage: selfplay --game 8|snk --out DIR --minutes M --seed S
 //                 [--noisy 1] [--skill 1.0] [--budget 250] [--random-start 0.5]
-//                 [--weights8 FILE] [--snk-params FILE] [--snk-table FILE]
+//                 [--weights8 FILE] [--snk-params FILE] [--snk-table FILE] [--snk-net FILE]
 // Writes DIR/<game>_<seed>.games (see common.h) and, for snooker, DIR/<game>_<seed>.stats
 // (one line per shot: kind targetClass potted foul visitStart) for calibrating the abstract
 // simulator, and DIR/snk_<seed>.posrec: the full raw positions with the frame result, for
-// training a neural evaluator later (format: SnkPosRec below, documented in TRAINING.md).
+// training a neural evaluator later (format: SnkPosRec in common.h, documented in TRAINING.md).
 // Every finished game is flushed, so killing the process loses at most one game.
 #include "common.h"
 using namespace train;
 
 static int snkTargetClass(int t) { return t >= 1 && t <= 15 ? 1 : (t >= 16 ? 2 : 0); }
-
-// raw snooker position record (little-endian). Per frame: header {int32 magic 'SNKP',
-// int32 version 2, int32 nPos, int32 winner (0/1), float skill (0 = no human error),
-// int32 budget}, then nPos x SnkPosRec (104 bytes). Coordinates in units of 0.1 mm,
-// table centre = 0, x along the long axis (baulk at negative x).
-#pragma pack(push, 1)
-struct SnkPosRec {
-    int16_t score0, score1;
-    uint8_t mover, phase, nextColour, flags;   // flags: 1 ball in hand, 2 free ball
-    float value;                               // search value of the chosen shot (mover's view)
-    uint32_t onMask;                           // bit i: ball i on the table
-    int16_t x[22], y[22];
-};
-#pragma pack(pop)
-static_assert(sizeof(SnkPosRec) == 104, "SnkPosRec layout");
-static void snkRaw(const GameSnk& g, float value, SnkPosRec& r) {
-    r.score0 = (int16_t)g.score[0]; r.score1 = (int16_t)g.score[1];
-    r.mover = (uint8_t)g.turn; r.phase = (uint8_t)g.phase; r.nextColour = (uint8_t)g.nextColour;
-    r.flags = (uint8_t)((g.ballInHand ? 1 : 0) | (g.freeBall ? 2 : 0));
-    r.value = value; r.onMask = 0;
-    for (int i = 0; i < 22; ++i) {
-        const Ball& b = g.sim.b[i];
-        if (i < g.sim.n && b.on) r.onMask |= 1u << i;
-        r.x[i] = (int16_t)lround(b.x * 1e4); r.y[i] = (int16_t)lround(b.y * 1e4);
-    }
-}
 
 int main(int argc, char** argv) {
     Args a(argc, argv);
@@ -55,7 +29,8 @@ int main(int argc, char** argv) {
         nn = w8.data();
     }
     SnkEvalOwned se;
-    if (snk && !loadSnkEval(a.str("--snk-params", "none"), a.str("--snk-table", "none"), se)) return 1;
+    if (snk && (!loadSnkEval(a.str("--snk-params", "none"), a.str("--snk-table", "none"), se) ||
+                !loadSnkNet(a.str("--snk-net", "none"), noisy ? skill : 0, se))) return 1;
     if (snk && !se.ev.table) fprintf(stderr, "warning: no --snk-table, search values are points, not win chances (TD targets will be poor)\n");
 
     char path[512];

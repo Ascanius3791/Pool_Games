@@ -3,6 +3,7 @@
 // usage: arena --game 8|snk --minutes M [--noisy 1] [--skill 1] [--budget 250] [--seed S]
 //              8-ball:  --a-weights8 FILE|none  --b-weights8 FILE|none
 //              snooker: --a-snk-params F --a-snk-table F  --b-snk-params F --b-snk-table F
+//                       [--a-snk-net F] [--b-snk-net F]  (neural evaluator on top of the table)
 //              [--elo1 30]  (SPRT H0: elo 0 vs H1: elo1, alpha = beta = 0.05)
 // Games come in pairs with the same seed and swapped sides. Last line:
 //   ARENA {"a":W,"b":L,"games":N,"score":s,"elo":e,"elo_ci":c,"llr":x,"verdict":"A|B|undecided"}
@@ -25,7 +26,8 @@ int main(int argc, char** argv) {
     }
     SnkEvalOwned sa, sb;
     if (snk && (!loadSnkEval(a.str("--a-snk-params", "none"), a.str("--a-snk-table", "none"), sa) ||
-                !loadSnkEval(a.str("--b-snk-params", "none"), a.str("--b-snk-table", "none"), sb))) return 1;
+                !loadSnkEval(a.str("--b-snk-params", "none"), a.str("--b-snk-table", "none"), sb) ||
+                !loadSnkNet(a.str("--a-snk-net", "none"), noisy ? skill : 0, sa) || !loadSnkNet(a.str("--b-snk-net", "none"), noisy ? skill : 0, sb))) return 1;
     NoiseModel nm; defaultNoise(nm); nm.skill = skill;
     const double p0 = 0.5, p1 = 1 / (1 + std::pow(10, -elo1 / 400));
     int wA = 0, wB = 0, n = 0; double llr = 0; const double up = std::log(0.95 / 0.05), lo = std::log(0.05 / 0.95);

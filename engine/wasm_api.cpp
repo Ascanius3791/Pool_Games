@@ -4,6 +4,7 @@
 #include "../train/out/std_weights.h"
 #include "../train/out/noisy_weights.h"
 #include "../train/out/snk_eval.h"
+#include "../train/out/snk_net.h"
 
 extern "C" {
 void* memcpy(void* d, const void* s, unsigned long n) {
@@ -149,17 +150,23 @@ EXPORT(shootV) void shootV(double phi, double V, double a, double b, int noisy) 
     shootParams(sp, noisy);
 }
 
-// snooker evaluator from training (train/export.py); legacy points evaluation if not accepted yet
-static const SnkEval* snkEvaluator() {
+// snooker evaluator from training (train/export.py); legacy points evaluation if not accepted yet.
+// The neural evaluator judges positions for the human-error level of the current profile.
+static const SnkEval* snkEvaluator(int noisy) {
 #if SNK_USE_TABLE
     static SnkEval ev; static int init = 0;
     if (!init) {
         snkEvalDefaults(ev);
         ev.a0 = SNK_PARAMS[0]; ev.a1 = SNK_PARAMS[1]; ev.a2 = SNK_PARAMS[2]; ev.a3 = SNK_PARAMS[3]; ev.a4 = SNK_PARAMS[4]; ev.eScale = SNK_PARAMS[5];
         ev.table = SNK_TABLE; ev.tD0 = SNK_TD0; ev.tND = SNK_TND; ev.tNR = SNK_TNR; init = 1;
+#if SNK_USE_NET
+        ev.net = SNK_NET;
+#endif
     }
+    ev.skill = snkSkillOf(NM, noisy != 0);
     return &ev;
 #else
+    (void)noisy;
     return 0;
 #endif
 }
@@ -170,7 +177,7 @@ static u64 botSeed = 1;
 EXPORT(botThink) void botThink(int noisy, int useNN, double budget) {
     botDefaults(BOT, noisy != 0, (useNN && !TYPE) ? (noisy ? NN_NOISY : NN_STD) : 0, botSeed++);
     BOT.nm = NM;     // the bot plays with the same unsteady arm
-    if (TYPE) BOT.snk = snkEvaluator();
+    if (TYPE) BOT.snk = snkEvaluator(noisy);
     BOT.budget = budget;
     BotDecision d;
     if (TYPE) pool::botThink(BOT, GS, d); else pool::botThink(BOT, G8, d);
@@ -258,7 +265,7 @@ EXPORT(setFreeNom) int setFreeNom(int id) {
 // the computer's favourite target for the player to move (used to nominate a free ball)
 EXPORT(botFavourite) int botFavourite(int noisy, double budget) {
     BotCtx c; botDefaults(c, noisy != 0, 0, botSeed++); c.nm = NM; c.budget = budget;
-    if (TYPE) c.snk = snkEvaluator();
+    if (TYPE) c.snk = snkEvaluator(noisy);
     BotDecision d;
     if (TYPE) pool::botThink(c, GS, d); else pool::botThink(c, G8, d);
     return d.tgt;

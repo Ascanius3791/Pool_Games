@@ -5,3 +5,7 @@ runs/smoke/
 runs/*/iter_*/selfplay_*.log
 *.o
 node_modules/
+data_local/
+data_gh1/
+data_nn/
+feat/

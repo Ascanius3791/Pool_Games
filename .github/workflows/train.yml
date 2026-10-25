@@ -20,6 +20,12 @@ on:
       skills:
         description: "Snooker self-play skill per core, rotating (0 = no human error)"
         default: "1.0 0 1.0 2.0"
+      net:
+        description: "Train the neural snooker evaluator (1 = yes)"
+        default: "1"
+      net_epochs:
+        description: "Net training passes over all positions per iteration"
+        default: "3"
 permissions:
   contents: write
 jobs:
@@ -33,6 +39,9 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y g++ clang lld make python3
           mkdir -p build/npm && cd build/npm && npm init -y > /dev/null && npm install three@0.128.0 binaryen@116.0.0
+      - name: Python packages (neural evaluator)
+        if: github.event.inputs.net == '1'
+        run: pip install numpy torch --index-url https://download.pytorch.org/whl/cpu
       - name: Restore self-play data
         uses: actions/cache/restore@v4
         with:
@@ -48,6 +57,8 @@ jobs:
           BUDGET: ${{ github.event.inputs.budget }}
           SKILL: ${{ github.event.inputs.skill }}
           SKILLS: ${{ github.event.inputs.skills }}
+          NET: ${{ github.event.inputs.net }}
+          NET_EPOCHS: ${{ github.event.inputs.net_epochs }}
           RUN: runs/gh_${{ github.run_number }}
           BEST_FROM: train/baseline
         run: ./train/run_pipeline.sh

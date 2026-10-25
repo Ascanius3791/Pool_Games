@@ -216,10 +216,13 @@ struct SnkEval {
     real eScale;                  // effective D = D + eScale * E
     const unsigned char* table;   // [tNR][tND] uint8 win probabilities * 255
     int tD0, tND, tNR;            // D index = D + tD0
+    const float* net;             // neural evaluator weights (SNK_NET_NW floats, 0 = linear E)
+    real skill;                   // human-error level the net judges for (0 = none, 1 = club)
 };
 inline void snkEvalDefaults(SnkEval& e) {
     e.a0 = 0; e.a1 = 1; e.a2 = 0.5; e.a3 = -3; e.a4 = 0; e.eScale = 1;
     e.table = 0; e.tD0 = 160; e.tND = 321; e.tNR = 148;
+    e.net = 0; e.skill = 1;
 }
 inline real snkWin(const SnkEval& ev, real D, int R) {
     if (R < 0) R = 0; if (R >= ev.tNR) R = ev.tNR - 1;
@@ -342,10 +345,166 @@ inline void snkFeatures(const GameSnk& g, int bih, real* f) {
 inline real snkVisitP(const SnkEval& ev, const real* f) {
     return ev.a0 + ev.a1 * f[2] * (f[3] + f[4]) + ev.a2 * f[5] + ev.a3 * f[6] + ev.a4 * f[7];
 }
-// win chance of the player to move in g
-inline real snkWinNow(const SnkEval& ev, const GameSnk& g, int bih) {
+
+// Neural snooker evaluator (trained by train/snknet.py on the self-play positions).
+//   P(win) = sigmoid(gamma * logit W(D + dOff + E, R)),  E = E_lin + e,  gamma = exp(g)
+// E_lin is the linear evaluator above (its 6 parameters are stored with the net), (e, g) come
+// from a small network: every object ball is encoded by a shared layer, the codes are pooled
+// (sum and max, reds and colours apart) and a head combines them with the global inputs.
+// The table keeps the score context; the net learns the positional points and, through
+// gamma, how decisive a lead is at the given human-error level. With e = g = 0 it is exactly
+// the linear evaluator, which is how training starts.
+// Inputs are mirrored so the cue ball is always at y >= 0 (the table is symmetric in y).
+const int SNK_NB = 12;            // per-ball inputs
+const int SNK_NG = 23;            // global inputs
+const int SNK_HE = 24, SNK_H1 = 48, SNK_H2 = 24;
+const int SNK_NP = 4 * SNK_HE + SNK_NG;   // head input: red sum, red max, colour sum, colour max, globals
+// weight layout (input-major, so the inner loops run over outputs and vectorise without
+// reordering any sum): We[NB][HE] be[HE] W1[NP][H1] b1[H1] W2[H1][H2] b2[H2] W3[H2][2] b3[2] lin[6]
+const int SNK_NET_NW = SNK_HE * SNK_NB + SNK_HE + SNK_H1 * SNK_NP + SNK_H1 + SNK_H2 * SNK_H1 + SNK_H2 + 2 * SNK_H2 + 2 + 6;
+
+// max over the pockets with an open object lane (objLane) of exp(-0.75 d) (x 0.8 for middle
+// pockets): pockets are tried from the best value down, the first open one is the answer
+inline real snkPocketLane(const Sim& s, int t) {
+    const Ball& B = s.b[t];
+    real key[6], dd[6]; int ord[6], n = 0;
+    for (int k = 0; k < s.T.npk; ++k) {
+        real px, py; pocketTarget(s, k, px, py);
+        real ux = px - B.x, uy = py - B.y, d = psqrt(ux * ux + uy * uy);
+        if (d < 1e-6) continue;
+        const Pocket& P = s.T.pk[k];
+        if ((ux * P.nx + uy * P.ny) / d < (k >= 4 ? 0.55 : 0.40)) continue;
+        real kk = d + (k >= 4 ? 0.29752 : 0);   // -ln(0.8) / 0.75
+        int i = n++;
+        while (i > 0 && key[i - 1] > kk) { key[i] = key[i - 1]; ord[i] = ord[i - 1]; dd[i] = dd[i - 1]; --i; }
+        key[i] = kk; ord[i] = k; dd[i] = d;
+    }
+    for (int i = 0; i < n; ++i) {
+        real px, py; pocketTarget(s, ord[i], px, py);
+        if (laneClear(s, B.x, B.y, px, py, 2 * s.P.R * 0.98, t, -1)) return pexp(-0.75 * dd[i]) * (ord[i] >= 4 ? 0.8 : 1);
+    }
+    return 0;
+}
+// Inputs of position g for the player to move: ball rows bf[21][NB] (ball id 1..21, zeros if
+// off the table), globals gf[NG] and the 8 record features f (snkFeatures, same values).
+inline void snkNetInputs(const GameSnk& g, int bih, real skill, float* bf, float* gf, real* f) {
+    const Sim& s = g.sim; const real R = s.P.R;
+    const real hx = s.T.L / 2, hy = s.T.W / 2;
+    const Ball& c = s.b[0];
+    const real ys = c.y < 0 ? -1 : 1;
+    // shot eases from the cue ball: the same top-two bookkeeping as snkFeatures, and the best
+    // ease per ball. Lane checks only for eases that could change one of them (identical results)
+    real e1 = 0, e2 = 0; int v1 = 1;
+    for (int t = 1; t < 22; ++t) {
+        float* b = bf + (t - 1) * SNK_NB;
+        for (int j = 0; j < SNK_NB; ++j) b[j] = 0;
+        if (t >= s.n || !s.b[t].on) continue;
+        const Ball& B = s.b[t];
+        const bool on = snkOn(g, t);
+        real best = 0, lane = 0;
+        if (!(on && bih)) lane = snkPocketLane(s, t);
+        for (int k = 0; on && k < s.T.npk; ++k) {
+            int v = snkValue(t);
+            real e;
+            if (bih) {
+                real ux, uy, d2;
+                const bool open = objLane(s, t, k, ux, uy, d2);
+                if (open) lane = pmax(lane, pexp(-0.75 * d2) * (k >= 4 ? 0.8 : 1));
+                e = open ? pexp(-0.15 - 0.6 * d2) : 0;
+            } else {
+                real need = pmin(best, pmin(e2, e1 * (v1 + 3) / (v + 3)));
+                e = shotEaseAbove(s, c.x, c.y, t, k, need);
+                if (e <= need) e = 0;
+            }
+            best = pmax(best, e);
+            if (e * (v + 3) > e1 * (v1 + 3)) { e2 = e1; e1 = e; v1 = v; } else if (e > e2) e2 = e;
+        }
+        real dx = B.x - c.x, dy = B.y - c.y;
+        b[0] = 1; b[1] = B.x / hx; b[2] = ys * B.y / hy;
+        b[3] = psqrt(dx * dx + dy * dy) / s.T.L;
+        b[4] = on ? 1 : 0; b[5] = snkIsRed(t) ? 1 : 0; b[6] = snkIsRed(t) ? 0 : snkValue(t) / 7.0;
+        b[7] = best; b[8] = lane;
+        b[9] = laneClear(s, c.x, c.y, B.x, B.y, 2 * R * 0.98, 0, t) ? 1 : 0;
+        b[10] = pmin(1, pmin(hx - pabs(B.x), hy - pabs(B.y)) / 0.2);
+        int near = 0;
+        for (int j = 1; j < s.n; ++j) if (j != t && s.b[j].on) { real ex = s.b[j].x - B.x, ey = s.b[j].y - B.y; if (ex * ex + ey * ey < 16 * R * R) near++; }
+        b[11] = near / 4.0;
+    }
+    const int rem = snkRemaining(g);
+    f[0] = g.score[g.turn] - g.score[1 - g.turn]; f[1] = rem;
+    f[2] = e1; f[3] = v1; f[4] = rem > 12 ? 6.0 : rem * 0.5; f[5] = e2;
+    f[6] = (!bih && !snkCanHit(g)) ? 1 : 0; f[7] = bih ? 1 : 0;
+    const real D = f[0];
+    gf[0] = D / 40; gf[1] = rem / 147.0; gf[2] = pclamp(D / (rem + 1), -2, 2) / 2;
+    gf[3] = -D > rem ? 1 : 0; gf[4] = D > rem ? 1 : 0;
+    gf[5] = g.phase == SNK_RED_ON; gf[6] = g.phase == SNK_COLOUR_ON; gf[7] = g.phase == SNK_SEQUENCE;
+    gf[8] = g.phase == SNK_SEQUENCE ? snkValue(g.nextColour) / 7.0 : 0;
+    gf[9] = bih ? 1 : 0; gf[10] = g.freeBall ? 1 : 0;
+    gf[11] = skill / 2.5; gf[12] = skill <= 0 ? 1 : 0;
+    gf[13] = snkRedsOn(g) / 15.0;
+    gf[14] = c.x / hx; gf[15] = ys * c.y / hy; gf[16] = pmin(1, pmin(hx - pabs(c.x), hy - pabs(c.y)) / 0.2);
+    gf[17] = f[2]; gf[18] = f[3] / 7; gf[19] = f[4] / 6; gf[20] = f[5]; gf[21] = f[6];
+    gf[22] = f[2] * (f[3] + f[4]) / 13;
+}
+// dense layer y = relu?(b + x W), W input-major [n][m]
+inline void snkDense(const float* W, const float* b, const float* x, int n, int m, float* y, bool relu) {
+    for (int i = 0; i < m; ++i) y[i] = b[i];
+    for (int j = 0; j < n; ++j) { const float xj = x[j]; if (xj == 0) continue; const float* Wj = W + j * m; for (int i = 0; i < m; ++i) y[i] += xj * Wj[i]; }
+    if (relu) for (int i = 0; i < m; ++i) y[i] = y[i] > 0 ? y[i] : 0;
+}
+// network part: (e, g) from the inputs
+inline void snkNetForward(const float* w, const float* bf, const float* gf, real& eOut, real& gOut) {
+    const float* We = w; const float* be = We + SNK_HE * SNK_NB;
+    const float* W1 = be + SNK_HE; const float* b1 = W1 + SNK_H1 * SNK_NP;
+    const float* W2 = b1 + SNK_H1; const float* b2 = W2 + SNK_H2 * SNK_H1;
+    const float* W3 = b2 + SNK_H2; const float* b3 = W3 + 2 * SNK_H2;
+    float x[SNK_NP], h[SNK_HE];
+    for (int i = 0; i < 4 * SNK_HE; ++i) x[i] = 0;
+    for (int t = 0; t < 21; ++t) {
+        const float* b = bf + t * SNK_NB;
+        if (b[0] == 0) continue;
+        snkDense(We, be, b, SNK_NB, SNK_HE, h, true);
+        float* pool = x + (t < 15 ? 0 : 2 * SNK_HE);
+        const float sc = t < 15 ? 0.125f : 0.25f;
+        for (int i = 0; i < SNK_HE; ++i) { pool[i] += h[i] * sc; pool[SNK_HE + i] = h[i] > pool[SNK_HE + i] ? h[i] : pool[SNK_HE + i]; }
+    }
+    for (int j = 0; j < SNK_NG; ++j) x[4 * SNK_HE + j] = gf[j];
+    float h1[SNK_H1], h2[SNK_H2], o[2];
+    snkDense(W1, b1, x, SNK_NP, SNK_H1, h1, true);
+    snkDense(W2, b2, h1, SNK_H1, SNK_H2, h2, true);
+    snkDense(W3, b3, h2, SNK_H2, 2, o, false);
+    eOut = o[0]; gOut = o[1];
+}
+// win chance from the table value p and the net outputs
+inline real snkNetCombine(real p, real gOut) {
+    p = pclamp(p, 0.5 / 255, 254.5 / 255);
+    real z = plog(p / (1 - p)) * pexp(pclamp(gOut, -3, 3));
+    return psigmoid(z);
+}
+inline real snkNetWin(const SnkEval& ev, const GameSnk& g, int bih, real dOff) {
+    float bf[21 * SNK_NB], gf[SNK_NG]; real f[SNK_NF], e, gg;
+    snkNetInputs(g, bih, ev.skill, bf, gf, f);
+    snkNetForward(ev.net, bf, gf, e, gg);
+    const float* lin = ev.net + SNK_NET_NW - 6;
+    real E = lin[5] * (lin[0] + lin[1] * f[2] * (f[3] + f[4]) + lin[2] * f[5] + lin[3] * f[6] + lin[4] * f[7]) + e;
+    return snkNetCombine(snkWin(ev, f[0] + dOff + E, (int)f[1]), gg);
+}
+// human-error level of a noise profile for the net: geometric mean of the channel sigmas at a
+// medium stroke relative to the default profile (a default profile scaled by k gives k)
+inline real snkSkillOf(const NoiseModel& nm, bool noisy) {
+    if (!noisy) return 0;
+    NoiseModel d; defaultNoise(d);
+    real l = 0;
+    for (int ch = 0; ch < 4; ++ch) l += plog(pmax(1e-6, noiseSigma(nm, ch, 0.35)) / noiseSigma(d, ch, 0.35));
+    real k = pexp(l / 4) * (1 + 0.1 * nm.missProb * (nm.missMul - 1));
+    return pclamp(k, 0, 3);
+}
+
+// win chance of the player to move in g (dOff: extra points credited to the player to move)
+inline real snkWinNow(const SnkEval& ev, const GameSnk& g, int bih, real dOff = 0) {
+    if (ev.net) return snkNetWin(ev, g, bih, dOff);
     real f[SNK_NF]; snkFeatures(g, bih, f);
-    return snkWin(ev, f[0] + ev.eScale * snkVisitP(ev, f), (int)f[1]);
+    return snkWin(ev, f[0] + dOff + ev.eScale * snkVisitP(ev, f), (int)f[1]);
 }
 inline real snkVisit(const GameSnk& g, int bih) {
     const Sim& s = g.sim;
@@ -382,11 +541,8 @@ inline real valueAfterWin(const SnkEval& ev, const GameSnk& before, GameSnk& a) 
         GameSnk u = a; u.turn = me; u.freeBall = 0;
         real pBack = 1 - snkWinNow(ev, u, u.ballInHand);
         real pOpp = pmax(pPlay, pBack);
-        if (a.foulNoHit && snkDirectSight(before)) {    // a miss: they can make us play it again
-            real f[SNK_NF]; snkFeatures(t, t.ballInHand, f);
-            real pRep = snkWin(ev, f[0] + 0.8 * a.foulPts + ev.eScale * snkVisitP(ev, f), (int)f[1]);
-            pOpp = pmax(pOpp, pRep);
-        }
+        if (a.foulNoHit && snkDirectSight(before))      // a miss: they can make us play it again
+            pOpp = pmax(pOpp, snkWinNow(ev, t, t.ballInHand, 0.8 * a.foulPts));
         return 1 - pOpp;
     }
     real w = snkWinNow(ev, a, a.ballInHand);

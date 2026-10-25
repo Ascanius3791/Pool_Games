@@ -1,6 +1,6 @@
 # Pool / Snooker project: status and design notes
 
-## Status (2026-10-24)
+## Status (2026-10-25)
 - Paul approved the physics ("wonderful"). Artifact "Felt & Chalk 8-Ball": https://claude.ai/artifact/AAwk4E6Dqq8nhTBde8zxKk
 - v2 changes:
   - removed the pocket liner shell
@@ -80,10 +80,21 @@
   - Smoke test (budget 80, 1.5 min): win-table evaluator beat the legacy points evaluator 192-143 (+51 +- 38 Elo, SPRT accept). Not exported (smoke).
   - GitHub repo: github.com/Ascanius3791/Pool_Games. The cloud sandbox cannot push to it (repo not in the session's authorised set).
 
+- Cloud run gh_1 (2026-10-25, 5 h, 4 cores, 7 iterations): one candidate accepted (iteration 2: 167-120, +57 +- 41 Elo), which switched on the win-table evaluator (params -0.39 0.38 1.90 -4.59 -2.53 2.50). Iterations 3-7 stayed within noise of it. After the switch the self-play played more safeties (pFoulSafety 0.18 -> 0.28, pot rates down). Merged into main and the page rebuilt.
+- Cloud data export: caches cannot be downloaded, so `.github/workflows/export-data.yml` repacks the cache as an artifact. gh_1 data: 46,439 frames, 2.64M positions (skill 0: 0.73M, 1.0: 1.29M, 2.0: 0.62M).
+
+- v11 (2026-10-25): neural snooker evaluator (bot.h: snkNetInputs / snkNetForward / snkNetWin)
+  - P = sigmoid(gamma * logit W(D + E_lin + e, R)), (e, log gamma) from a net: per-ball shared layer 12 -> 24, pooled sum/max for reds and colours, head 119 -> 48 -> 24 -> 2, 23 globals including skill. The last layer starts at zero, so the untrained net is exactly the linear evaluator. Inputs mirrored so the cue ball has y >= 0.
+  - Forward in float with input-major weights (inner loops over outputs: vectorises without reordering sums, so native and WASM agree). Inputs reuse the snkFeatures bookkeeping, lane checks only above the needed thresholds, ordered pocket search for the open-pocket value. Cost: evaluation ~4 us forward + ~14 us inputs (linear ~6 us); decision at budget 2000 about 1.5x the linear evaluator.
+  - Tools: train/bin/snkfeat (posrec -> float16 rows, engine-computed), train/snknet.py (PyTorch, TD(lambda) targets, chunked reading for low memory, exports engine layout), arena/selfplay --snk-net, export.py -> train/out/snk_net.h (SNK_USE_NET). Python and C++ forward agree to ~1e-5 (float16 inputs).
+  - Pipeline: NET=1 (default) extracts new shards in parallel into feat/, trains NET_EPOCHS from the best net, arena 'snknet' against the current best. Once accepted, self-play uses the net and the linear candidate/table stay fixed. Workflow installs CPU torch. make smoke passes with it.
+  - Browser: the net judges for the profile's level, snkSkillOf(NM) = geometric mean of the channel sigmas at s = 0.35 relative to the Club player (x small miss-chance factor), 0 without human error.
+  - First result (net after 1 epoch on gh_1 data, arena skill 1.0, budget 2000): 99-29 vs the linear evaluator (2 processes); controls: same net on both sides 43-44, roles reversed 26-81. Validation result loss at skill 1.0: 0.472 -> 0.464, skill 0: 0.315 -> 0.266.
+  - Local machine: 8 threads but only ~3.8 GB in the session's memory cgroup; the trainer was OOM-killed once when arenas ran beside it.
+
 ## Next steps (for the next session)
-1. Paul starts the workflow (Actions -> Train bots -> Run workflow, defaults). Read runs/gh_<n>/REPORT.md on branch training/<n>, merge if good.
-2. Skill-conditioned snooker NN on the *.posrec data: inputs = ball positions (e.g. per-ball features or a coarse grid) + score diff, points remaining, phase, ball in hand, free ball, skill; output = win probability. Pretrain on skill 0 frames, refine on all skills; replace SnkEval in valueAfter; arena against the win table.
-3. Maybe: per-ball "spatial grid" in the engine if many-ball shots dominate; two-shot lookahead for safeties.
+1. Start "Train bots" (defaults now include NET=1): the cloud continues from the net in train/baseline, its self-play uses the net. Read runs/gh_<n>/REPORT.md on branch training/<n>, merge if good.
+2. Possibly: equal-time comparison (the net costs ~1.5x per decision); a larger net if the arena keeps accepting; policy prior; two-shot lookahead for safeties.
 
 ## Strategy gaps and training plan (discussed 2026-10-24)
 - The bot looks one shot ahead plus a static evaluation, so it has no multi-visit planning.

@@ -2,7 +2,7 @@
 CXX ?= g++
 CXXFLAGS ?= -O3 -march=native -std=c++17 -ffp-contract=off
 HDRS := $(wildcard engine/*.h) train/common.h
-TOOLS := train/bin/selfplay train/bin/tune train/bin/arena train/bin/abstract_snk
+TOOLS := train/bin/selfplay train/bin/tune train/bin/arena train/bin/abstract_snk train/bin/snkfeat
 
 .PHONY: tools tests web clean smoke
 tools: $(TOOLS)
@@ -25,7 +25,7 @@ web:
 
 # 3-minute end-to-end check of the training pipeline
 smoke: tools
-	HOURS=0.12 SP_MIN=1.5 ARENA_MIN=1 BUDGET=80 BUILD_WEB=0 EXPORT=0 RUN=runs/smoke ./train/run_pipeline.sh
+	HOURS=0.15 SP_MIN=1.5 ARENA_MIN=1 BUDGET=80 BUILD_WEB=0 EXPORT=0 NET_EPOCHS=1 FEAT=runs/smoke/feat RUN=runs/smoke ./train/run_pipeline.sh
 
 clean:
 	rm -rf train/bin build/test_physics build/snk_rules_test build/bot_test build/ev_test
