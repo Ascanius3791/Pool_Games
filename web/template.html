@@ -1638,7 +1638,7 @@ function maybeBotTurn() {
     S.botMove = { from: S.phi, to, t: 0, d };
     S.a = d.a; S.b = d.b; S.power = speedToPower(d.V); drawSpin(); updatePowerUI();
     const r = $("report"); r.hidden = false;
-    const est = S.type === 1 ? `est. value ${d.value >= 0 ? "+" : ""}${d.value.toFixed(1)} pts` : `est. win chance ${(d.value * 100).toFixed(0)}%`;
+    const est = S.type === 1 && E.snkEvalKind() === 0 ? `est. value ${d.value >= 0 ? "+" : ""}${d.value.toFixed(1)} pts` : `est. win chance ${(d.value * 100).toFixed(0)}%`;
     r.innerHTML = `<b>${playerName(S.game.turn).toUpperCase()} · DECISION</b>${est}<br>phase 1: ${d.cands} candidates, ${Math.round(d.p1)} sims<br>phase 2: ${d.refine} refinements, ${d.switches} switches<br>${d.full} full sims · ${d.partial} root-finding probes<br>budget ${Math.round(d.sims)} / ${S.effort} · ${(ms / 1000).toFixed(2)} s`;
     S.phase = "botaim";
     setMsg(`${playerName(S.game.turn)} is lining up the shot.${S.botFbMsg || ""}`);

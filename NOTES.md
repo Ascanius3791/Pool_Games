@@ -90,6 +90,8 @@
   - Pipeline: NET=1 (default) extracts new shards in parallel into feat/, trains NET_EPOCHS from the best net, arena 'snknet' against the current best. Once accepted, self-play uses the net and the linear candidate/table stay fixed. Workflow installs CPU torch. make smoke passes with it.
   - Browser: the net judges for the profile's level, snkSkillOf(NM) = geometric mean of the channel sigmas at s = 0.35 relative to the Club player (x small miss-chance factor), 0 without human error.
   - First result (net after 1 epoch on gh_1 data, arena skill 1.0, budget 2000): 99-29 vs the linear evaluator (2 processes); controls: same net on both sides 43-44, roles reversed 26-81. Validation result loss at skill 1.0: 0.472 -> 0.464, skill 0: 0.315 -> 0.266.
+  - Net v2 (5 epochs on gh_1 + 79k local positions at skills 0-2.5; val result loss 0.4246 vs linear 0.4445) is the default (train/baseline/snk_net.bin, snk_use_net = 1). Arena at skill 1.0, budget 2000 (stopped early on Paul's call): 108-39 vs the linear evaluator, 69-47 vs the 1-epoch net.
+  - Page: 'est. value' shows a win chance whenever the win table or net is in use (E.snkEvalKind()).
   - Local machine: 8 threads but only ~3.8 GB in the session's memory cgroup; the trainer was OOM-killed once when arenas ran beside it.
 
 ## Next steps (for the next session)

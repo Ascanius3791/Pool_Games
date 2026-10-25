@@ -170,6 +170,8 @@ static const SnkEval* snkEvaluator(int noisy) {
     return 0;
 #endif
 }
+// which snooker evaluator the bots use: 0 legacy points, 1 win table, 2 neural (values are win chances for 1 and 2)
+EXPORT(snkEvalKind) int snkEvalKind() { return SNK_USE_TABLE ? (SNK_USE_NET ? 2 : 1) : 0; }
 static BotCtx BOT;
 static u64 botSeed = 1;
 // Bot decision -> OUT: place, px, py, phi, V, a, b, value, sims, cands,
