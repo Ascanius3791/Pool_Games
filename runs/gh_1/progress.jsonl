@@ -1,0 +1,7 @@
+{"iter":1,"kind":"snk","accepted":0,"arena":{"a":225,"b":178,"games":403,"score":0.558,"elo":41,"elo_ci":34,"llr":2.56,"verdict":"undecided"}}
+{"iter":2,"kind":"snk","accepted":1,"arena":{"a":167,"b":120,"games":287,"score":0.582,"elo":57,"elo_ci":41,"llr":2.99,"verdict":"A"}}
+{"iter":3,"kind":"snk","accepted":0,"arena":{"a":203,"b":175,"games":378,"score":0.537,"elo":26,"elo_ci":35,"llr":1.01,"verdict":"undecided"}}
+{"iter":4,"kind":"snk","accepted":0,"arena":{"a":184,"b":196,"games":380,"score":0.484,"elo":-11,"elo_ci":35,"llr":-2.45,"verdict":"undecided"}}
+{"iter":5,"kind":"snk","accepted":0,"arena":{"a":180,"b":193,"games":373,"score":0.483,"elo":-12,"elo_ci":35,"llr":-2.51,"verdict":"undecided"}}
+{"iter":6,"kind":"snk","accepted":0,"arena":{"a":202,"b":176,"games":378,"score":0.534,"elo":24,"elo_ci":35,"llr":0.84,"verdict":"undecided"}}
+{"iter":7,"kind":"snk","accepted":0,"arena":{"a":199,"b":184,"games":383,"score":0.520,"elo":14,"elo_ci":35,"llr":-0.13,"verdict":"undecided"}}
