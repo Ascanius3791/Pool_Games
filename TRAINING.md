@@ -53,10 +53,10 @@ Here `v` is the search value of the next position, converted into the mover's pe
 
 Each iteration does the following:
 
-1. **Self-play** on every core for `SP_MIN` minutes. The game types rotate over the cores (`GAMES`), and for snooker the human-error level rotates too (`SKILLS`, default `1.0 0 1.0 2.0`: club player, no error, club, beginner-ish). Half the games start from random mid-game positions, so rare situations are covered. Every finished game is appended to `data/<kind>/*.games`, so a killed process loses at most one game. Frames at `SKILL` go to `data/snk/` and feed the current evaluator; frames at other skills go to `data/snk_s<skill>/` and are kept for the neural evaluator (see *Raw positions* below).
+1. **Self-play** on every core for `SP_MIN` minutes. The game types rotate over the cores (`GAMES`), and for snooker the human-error level rotates too (`SKILLS`, default `1.0 0 1.0 2.0`: club player, no error, club, beginner-ish). Snooker frames start from a mix of position families (`SP_MIX`, see *Starting positions* below): about a third from the break, the rest from needing snookers, laid snookers, free balls, safety battles, clearances, black-ball finishes and perturbed real positions, so situations that ordinary frames rarely reach are covered. 8-ball: half the games start from random mid-game positions. Every finished game is appended to `data/<kind>/*.games`, so a killed process loses at most one game. Frames at `SKILL` go to `data/snk/` and feed the current evaluator; frames at other skills go to `data/snk_s<skill>/` and are kept for the neural evaluator (see *Raw positions* below).
 2. **Snooker win table**: recalibrated from all `*.stats` and recomputed (about 10 s).
 3. **Tune** each evaluator on all data collected so far, starting from the current best. With `NET=1` the features of new raw-position shards are extracted (in parallel, cached in `feat/`) and the neural snooker evaluator is trained for `NET_EPOCHS` passes, starting from the best net (or from the linear evaluator).
-4. **Arena**: each candidate plays the current best in paired games (same seed, sides swapped) with an SPRT (H0: +0 Elo, H1: +30 Elo, α = β = 0.05). The arena stops at the SPRT bound or after `ARENA_MIN`. The cores the arena does not use keep producing self-play data meanwhile.
+4. **Arena**: each candidate plays the current best in paired games (same seed, same starting position, sides swapped) with an SPRT (H0: +0 Elo, H1: +30 Elo, α = β = 0.05). The arena stops at the SPRT bound or after `ARENA_MIN`. Snooker pairs start from the families of `ARENA_SUITE`, interleaved by weight; the report has a table per family (games, score, Elo, pairs swept/split, how often the side to move at the start won). The cores the arena does not use keep producing self-play data meanwhile.
 5. **Accept** if the SPRT says so, or if the candidate scores ≥ 56% over ≥ 60 games. The net candidate (`snknet`) plays the current best snooker evaluator, whatever it is. Once a net is accepted, self-play uses it, and the linear candidate and the table underneath stay fixed (the net was trained on them).
 
 At the end, the best evaluators are exported to `train/out/*.h` (`train/export.py`). The page is rebuilt (`./build.sh`) if the npm dependencies are present.
@@ -94,6 +94,9 @@ HOURS=8 ./train/run_pipeline.sh                # the real run
 | `NET_EPOCHS` | 3 | passes over all snooker positions per iteration |
 | `FEAT` | `feat` | feature cache for the net (rebuilt from `data/` when missing) |
 | `BEST_FROM` | – | continue from a previous run's `runs/<stamp>/best` |
+| `SP_MIX` | `break:4 random:1 snookers:1 lead:0.5 snookered:1 freeball:0.5 safety:1 clearance:1 black:0.5 perturbed:1` | snooker self-play starting positions (family:weight); empty = the old 50% break / 50% random |
+| `ARENA_SUITE` | `break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:1 perturbed:1` | starting positions of the snooker arena pairs; empty = every pair from the break |
+| `POS_FROM` | `data/snk` | where the `perturbed` family takes its real positions from (`*.posrec`, a sample of 20k) |
 
 Throughput since the event-driven engine (v9/v10, about 20–25× faster simulation): snooker about 60–70 frames/min per core at budget 2000 with human error (about 3,500 positions/min, half of the frames start mid-frame). One 25-minute self-play phase on 4 cores gives about 6,000 frames / 350k positions; a 5-hour run about 2–3 million positions. Disk: about 100 bytes per position (raw records) plus about 40 for the tuning records.
 
@@ -118,15 +121,46 @@ Throughput since the event-driven engine (v9/v10, about 20–25× faster simulat
 Snooker self-play also writes `data/snk*/snk_<seed>.posrec`, the full positions with the frame result, at every skill level:
 
 ```
-per frame:    int32 magic 0x534E4B50 ('SNKP'), int32 version (2), int32 nPos, int32 winner (0/1),
-              float skill (0 = no human error), int32 budget
+per frame:    int32 magic 0x534E4B50 ('SNKP'), int32 version (3; 2 before the position families), int32 nPos,
+              int32 winner (0/1), float skill (0 = no human error), int32 budget,
+              version 3 only: int32 family (starting-position family, see below)
 per position (104 bytes, packed, little-endian):
               int16 score0, score1; uint8 mover, phase (0 red on, 1 colour on, 2 sequence), nextColour,
               flags (1 ball in hand, 2 free ball); float value (search value of the chosen shot, mover's view);
               uint32 onMask (bit i = ball i on the table); int16 x[22], y[22] (0.1 mm, table centre = 0)
 ```
 
-Ball ids: 0 cue, 1–15 reds, 16 yellow … 21 black. This is the training data of the neural evaluator (above): all skills together, the skill as an input, and the same net in the game for every human-error setting.
+Ball ids: 0 cue, 1–15 reds, 16 yellow … 21 black. This is the training data of the neural evaluator (above): all skills together, the skill as an input, and the same net in the game for every human-error setting. Readers accept both versions (`readRawFrames`); version 2 frames have family 255 (unknown). `snkfeat` writes the family of every row to `PREFIX.fam` (uint8), and `snknet.py` then also prints the validation losses per family.
+
+## Starting positions (`train/positions.h`)
+
+Self-play from the break reaches some frame-deciding situations only rarely, so the evaluator barely learns them. Each family builds such a position directly. All positions are legal: no overlaps (at least 0.3 mm apart), balls clear of the cushion noses, jaw facings and pocket mouths, phase/nextColour consistent with the balls on, a free ball only when the mover is snookered, scores consistent with the points that have left the table (plus a few foul points). `tests/positions_test.cpp` (`make positions-test`) checks this for thousands of positions per family, and that one bot shot later the position is still consistent.
+
+| Family | Position | What it teaches (value function: win chance given D, R, position) |
+|---|---|---|
+| `break` | the break-off | ordinary frames; most data still comes from here |
+| `random` | old `randomStartSnk`: 0–15 reds, scattered balls, D within ±40 | broad coverage of mid-frame positions |
+| `snookers` | colours only (yellow..pink on) or 1–4 reds; mover behind by R−8 … R+30, one in five R+30 … R+70 ("comically" far behind); a ball not on within 45 cm of a ball on | W is near 0 unless penalty points come: laying snookers, playing for them (the value of leaving the opponent snookered), and on the other side escaping them and tightening up |
+| `lead` | the mirror image: mover ahead by R−25 … R+15 with up to 8 reds | W near 1: not fouling, not leaving snookers, taking only safe pots, safe safety play |
+| `snookered` | cue ball snookered (engine definition: no ball on with both edges in straight sight), behind a ball not on, half of them frozen on a cushion | escapes (one/two cushions, swerve), the cost of being snookered, the opponent's foul options (put back / miss) as seen by `valueAfterWin` |
+| `freeball` | the same with the mover holding a free ball (after the opponent's foul) | the value of a free ball, nominating and potting it, the free-ball snooker foul |
+| `safety` | 8–15 reds in a (partly broken) pack, a few loose reds, colours on their spots; cue ball on or near the baulk cushion (or behind the pack); D within ±20 | safety exchanges: thin contacts back to baulk, leaving the cue ball tight on the cushion, when to split the pack |
+| `clearance` | colours only or 1–3 reds left, D in [−(R−1), R/2], cue ball often in position | positional play over the last balls, the last-red decision, clearing to win |
+| `black` | re-spotted black (tie, ball in hand in the D), last black with D within ±14, pink + black | the black-ball game: one ball decides, snooker on the last black, safe play when a foul loses |
+| `perturbed` | a real self-play position (from `*.posrec`), the score shifted (or redrawn over ±(R+30)), sometimes one or two balls moved a few cm and/or the mover swapped | the score context on realistic layouts: the same balls with very different D, so the net cannot learn D only from the layout |
+
+Two ideas were left out on purpose: the incoming player's foul decision (`pendingChoice`) is not a state the evaluator ever judges (`valueAfterWin` expands it into "play on" and "put back" positions, which `snookered`/`freeball` cover), and frames between very different skill levels would need an opponent-skill input in the net (the net has one skill input, assumed for both players), so their targets would contradict each other.
+
+Usage:
+
+```bash
+train/bin/selfplay --game snk ... --start-mix "break:4 snookers:1 snookered:1 ..." --pos-from data/snk
+train/bin/arena --game snk ... --suite "break:2 snookers:1 lead:1 ..." [--pos-from data/snk] [--pairs N] [--sprt 0]
+build/positions_test [--n 2000 --shots 150 --pos-from data/snk]          # validity
+build/positions_test --demo snookers --n 12 --budget 2000                # first decisions, net vs linear
+```
+
+A spec is `family:weight` separated by spaces or commas (a bare name = 1, `all` = every family). Self-play draws each frame's family at random by weight; the arena interleaves them deterministically (smooth weighted round robin), so a short arena still covers every family and both candidates see the same positions. Only frames from `break` and `random` write shot statistics (`*.stats`), so the abstract simulator stays calibrated on natural play. The `.games` tuning records and the raw positions include every family.
 
 To get the cloud data onto a local machine: *Actions → Export self-play data → Run workflow*, then `gh run download <run id> -n selfplay-data` (the cache itself cannot be downloaded).
 

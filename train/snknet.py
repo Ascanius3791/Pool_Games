@@ -8,7 +8,8 @@ PREFIX.x / PREFIX.meta come from train/bin/snkfeat. Targets are TD(lambda) retur
 the search values of the following positions and the frame result (as in common.h: tdTargets).
 Frames are split 90/10 into train/validation. The model mirrors the C++ forward pass exactly;
 it starts as the linear evaluator (last layer zero) and is exported as float32 in the C++ layout.
-Reports validation losses of the net and of the linear evaluator (pOld) per skill level.
+Reports validation losses of the net and of the linear evaluator (pOld) per skill level and,
+where PREFIX.fam exists (snkfeat from posrec version 3), per starting-position family.
 """
 import argparse, os, struct, time, zlib
 import numpy as np
@@ -20,6 +21,8 @@ NP = 4 * HE + NG
 NX = 21 * NB + NG
 NMETA = 13
 NW = HE * NB + HE + H1 * NP + H1 + H2 * H1 + H2 + 2 * H2 + 2 + 6
+# starting-position families, as in train/positions.h (255 = unknown / written before version 3)
+FAMILIES = ['break', 'random', 'snookers', 'lead', 'snookered', 'freeball', 'safety', 'clearance', 'black', 'perturbed']
 
 
 def load_table(path):
@@ -128,10 +131,13 @@ def main():
         meta = np.fromfile(pre + '.meta', dtype='<f4').reshape(-1, NMETA)
         x = np.memmap(pre + '.x', dtype='<f2', mode='r', shape=(len(meta), NX))
         y = td_targets(meta, a.lam)
+        fam = np.full(len(meta), 255, dtype=np.uint8)
+        if os.path.exists(pre + '.fam') and os.path.getsize(pre + '.fam') == len(meta):
+            fam = np.fromfile(pre + '.fam', dtype=np.uint8)
         fid = meta[:, 12].astype(np.int64)
         salt = zlib.crc32(os.path.basename(pre).encode())    # stable split when shards are added
         isval = ((fid * 2654435761 + salt) % 1000) < 100
-        sets.append(dict(x=x, meta=meta, y=y, val=isval))
+        sets.append(dict(x=x, meta=meta, y=y, val=isval, fam=fam))
         print('%s: %d positions, %d frames, %d validation positions' % (pre, len(meta), fid.max() + 1, isval.sum()), flush=True)
 
     lin = [float(v) for v in open(a.params).read().split()]
@@ -145,7 +151,7 @@ def main():
 
     def validate():
         model.eval()
-        P, Y, R, O, K = [], [], [], [], []
+        P, Y, R, O, K, FM = [], [], [], [], [], []
         with torch.no_grad():
             for si, s0 in chunks:
                 S = sets[si]; s1 = min(s0 + a.chunk, len(S['meta']))
@@ -155,11 +161,14 @@ def main():
                 xb = torch.from_numpy(np.asarray(S['x'][s0:s1])[m].astype(np.float32))
                 mb = S['meta'][s0:s1][m]
                 p = model(xb, torch.from_numpy(mb)).numpy()
-                P.append(p); Y.append(S['y'][s0:s1][m]); R.append(mb[:, 10]); O.append(mb[:, 8]); K.append(mb[:, 11])
+                P.append(p); Y.append(S['y'][s0:s1][m]); R.append(mb[:, 10]); O.append(mb[:, 8]); K.append(mb[:, 11]); FM.append(S['fam'][s0:s1][m])
         model.train()
-        P, Y, R, O, K = map(np.concatenate, (P, Y, R, O, K))
+        P, Y, R, O, K, FM = map(np.concatenate, (P, Y, R, O, K, FM))
         rows = []
-        for name, sel in [('all', np.ones_like(K, bool))] + [('skill %.1f' % k, np.isclose(K, k)) for k in np.unique(K)]:
+        groups = [('all', np.ones_like(K, bool))] + [('skill %.1f' % k, np.isclose(K, k)) for k in np.unique(K)]
+        if (FM != 255).any():
+            groups += [(FAMILIES[f] if f < len(FAMILIES) else 'unknown', FM == f) for f in np.unique(FM)]
+        for name, sel in groups:
             rows.append('%-10s n=%7d  net: target %.4f result %.4f | linear: target %.4f result %.4f' % (
                 name, sel.sum(), bce(P[sel], Y[sel]).mean(), bce(P[sel], R[sel]).mean(), bce(O[sel], Y[sel]).mean(), bce(O[sel], R[sel]).mean()))
         return bce(P, Y).mean(), rows, (bce(P, R).mean(), bce(O, Y).mean(), bce(O, R).mean())

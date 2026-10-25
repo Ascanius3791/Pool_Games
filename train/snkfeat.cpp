@@ -6,7 +6,9 @@
 // Writes PREFIX.x: float16 rows of 21*SNK_NB ball inputs + SNK_NG globals (position order), and
 // PREFIX.meta: float32 rows {f[0..7], pOld, value, result, skill, frame}, where f are the record
 // features (snkFeatures), pOld the linear evaluator's win chance, value the search value of
-// the chosen shot (mover's view), result 1 if the mover won the frame. With --snk-net, also
+// the chosen shot (mover's view), result 1 if the mover won the frame, and PREFIX.fam: uint8
+// per row, the starting-position family of the frame (train/positions.h; 255 = unknown, for
+// frames written before posrec version 3). With --snk-net, also
 // PREFIX.pnet: float32 win chance of that net per position (to check the trainer's mirror).
 #include "common.h"
 #include <dirent.h>
@@ -49,8 +51,8 @@ int main(int argc, char** argv) {
     const std::string netPath = a.str("--snk-net", "none");
     if (netPath != "none") { sn.tab = se.tab; sn.ev = se.ev; sn.ev.table = sn.tab.t.data(); if (!loadSnkNet(netPath, 1, sn)) return 1; }
     FILE* fn = netPath != "none" ? fopen((out + ".pnet").c_str(), "wb") : 0;
-    FILE* fx = fopen((out + ".x").c_str(), "wb"); FILE* fm = fopen((out + ".meta").c_str(), "wb");
-    if (!fx || !fm) { fprintf(stderr, "cannot write %s.*\n", out.c_str()); return 1; }
+    FILE* fx = fopen((out + ".x").c_str(), "wb"); FILE* fm = fopen((out + ".meta").c_str(), "wb"); FILE* ff = fopen((out + ".fam").c_str(), "wb");
+    if (!fx || !fm || !ff) { fprintf(stderr, "cannot write %s.*\n", out.c_str()); return 1; }
     const int NX = 21 * SNK_NB + SNK_NG;
     std::vector<uint16_t> row(NX);
     long frames = 0, positions = 0; double maxDiff = 0;
@@ -73,6 +75,7 @@ int main(int argc, char** argv) {
                 for (int j = 0; j < 8; ++j) m[j] = (float)f[j];
                 m[8] = (float)pOld; m[9] = r.value; m[10] = F.winner == r.mover ? 1.f : 0.f; m[11] = F.skill; m[12] = (float)frames;
                 fwrite(m, 4, 13, fm);
+                { uint8_t fam = (uint8_t)(F.family >= 0 && F.family < 255 ? F.family : 255); fwrite(&fam, 1, 1, ff); }
                 if (fn) { sn.ev.skill = F.skill; float pn = (float)snkWinNow(sn.ev, g, g.ballInHand); fwrite(&pn, 4, 1, fn); }
                 positions++;
             }
@@ -80,7 +83,7 @@ int main(int argc, char** argv) {
         }
         printf("%s: %ld frames, %ld positions so far (%.0f s)\n", path.c_str(), frames, positions, now() - t0); fflush(stdout);
     }
-    fclose(fx); fclose(fm); if (fn) fclose(fn);
+    fclose(fx); fclose(fm); fclose(ff); if (fn) fclose(fn);
     printf("done: %ld frames, %ld positions, %d inputs per row; max |snkNetInputs f - snkFeatures| = %.3g\n", frames, positions, NX, maxDiff);
     return 0;
 }

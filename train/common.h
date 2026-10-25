@@ -137,9 +137,10 @@ inline void tdTargets(const GameRec& g, double lambda, std::vector<double>& y) {
 
 // ------------------------------------------------------------------ raw snooker positions
 // raw snooker position record (little-endian). Per frame: header {int32 magic 'SNKP',
-// int32 version 2, int32 nPos, int32 winner (0/1), float skill (0 = no human error),
-// int32 budget}, then nPos x SnkPosRec (104 bytes). Coordinates in units of 0.1 mm,
-// table centre = 0, x along the long axis (baulk at negative x).
+// int32 version (2 or 3), int32 nPos, int32 winner (0/1), float skill (0 = no human error),
+// int32 budget, version 3 only: int32 family (starting-position family, train/positions.h)},
+// then nPos x SnkPosRec (104 bytes). Coordinates in units of 0.1 mm, table centre = 0, x along
+// the long axis (baulk at negative x).
 #pragma pack(push, 1)
 struct SnkPosRec {
     int16_t score0, score1;
@@ -169,14 +170,24 @@ inline void snkFromRaw(const SnkPosRec& r, GameSnk& g) {
     g.score[0] = r.score0; g.score[1] = r.score1; g.turn = r.mover; g.phase = r.phase; g.nextColour = r.nextColour;
     g.ballInHand = r.flags & 1; g.freeBall = (r.flags >> 1) & 1; g.isBreak = 0; g.pendingChoice = 0;
 }
-// a frame of raw records: header {int32 magic, int32 version, int32 nPos, int32 winner, float skill, int32 budget}
-struct SnkRawFrame { int winner, budget; float skill; std::vector<SnkPosRec> pos; };
+// a frame of raw records: header {int32 magic, int32 version, int32 nPos, int32 winner, float skill, int32 budget
+// [, int32 family (version >= 3)]}. family = SNK_FAM_UNKNOWN for version 2 frames.
+const int SNK_POSREC_VERSION = 3;
+const int SNK_FAM_UNKNOWN = 255;
+struct SnkRawFrame { int winner, budget, family; float skill; std::vector<SnkPosRec> pos; };
+inline void writeRawFrame(FILE* f, int winner, float skill, int budget, int family, const std::vector<SnkPosRec>& pos) {
+    int32_t h[4] = {0x534E4B50, SNK_POSREC_VERSION, (int32_t)pos.size(), winner};
+    int32_t bud = budget, fam = family;
+    fwrite(h, 4, 4, f); fwrite(&skill, 4, 1, f); fwrite(&bud, 4, 1, f); fwrite(&fam, 4, 1, f);
+    fwrite(pos.data(), sizeof(SnkPosRec), pos.size(), f); fflush(f);
+}
 inline bool readRawFrames(const std::string& path, std::vector<SnkRawFrame>& out) {
     FILE* f = fopen(path.c_str(), "rb"); if (!f) return false;
     for (;;) {
-        int32_t h[4]; float sk; int32_t bud;
+        int32_t h[4]; float sk; int32_t bud, fam = SNK_FAM_UNKNOWN;
         if (fread(h, 4, 4, f) != 4 || h[0] != 0x534E4B50 || fread(&sk, 4, 1, f) != 1 || fread(&bud, 4, 1, f) != 1) break;
-        SnkRawFrame fr; fr.winner = h[3]; fr.skill = sk; fr.budget = bud; fr.pos.resize(h[2]);
+        if (h[1] >= 3 && fread(&fam, 4, 1, f) != 1) break;
+        SnkRawFrame fr; fr.winner = h[3]; fr.skill = sk; fr.budget = bud; fr.family = fam; fr.pos.resize(h[2]);
         if (fread(fr.pos.data(), sizeof(SnkPosRec), fr.pos.size(), f) != fr.pos.size()) break;   // truncated tail
         out.push_back(std::move(fr));
     }
