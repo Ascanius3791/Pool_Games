@@ -1,0 +1,28 @@
+# Export the self-play data kept in the Actions cache as a downloadable artifact
+# (caches themselves cannot be downloaded). Start it from the Actions tab
+# ("Export self-play data" -> Run workflow), then: gh run download <run id> -n selfplay-data
+name: Export self-play data
+on:
+  workflow_dispatch:
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore self-play data
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: selfplay-data-none
+          restore-keys: selfplay-data-
+      - name: Pack
+        run: |
+          du -sh data/* || true
+          tar -czf selfplay-data.tar.gz data
+          ls -lh selfplay-data.tar.gz
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfplay-data
+          path: selfplay-data.tar.gz
+          compression-level: 0
+          retention-days: 7
