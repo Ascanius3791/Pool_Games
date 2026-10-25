@@ -6,6 +6,8 @@
 //                       [--a-snk-net F] [--b-snk-net F]  (neural evaluator on top of the table)
 //              [--elo1 30]  (SPRT H0: elo 0 vs H1: elo1, alpha = beta = 0.05)  [--sprt 0] (no early stop)
 //              [--pairs N]  (stop after N pairs)
+//              [--a-judge MM] [--b-judge MM]  (human-like judgement: sd of the ball positions each
+//                       noisy sample sees, in mm; 0 = exact, needs --noisy 1)
 //              snooker starting positions: [--suite "break:3 snookers:1 ..."] [--pos-from DIR[,DIR]]
 // Games come in pairs with the same seed and swapped sides (A is player 0 in the first game of a
 // pair, player 1 in the second); a pair is always completed. With --suite every pair starts from
@@ -56,6 +58,7 @@ int main(int argc, char** argv) {
                 !loadSnkEval(a.str("--b-snk-params", "none"), a.str("--b-snk-table", "none"), sb) ||
                 !loadSnkNet(a.str("--a-snk-net", "none"), noisy ? skill : 0, sa) || !loadSnkNet(a.str("--b-snk-net", "none"), noisy ? skill : 0, sb))) return 1;
     NoiseModel nm; defaultNoise(nm); nm.skill = skill;
+    const double judgeA = a.num("--a-judge", 0) * 0.001, judgeB = a.num("--b-judge", 0) * 0.001;
     const double p0 = 0.5, p1 = 1 / (1 + std::pow(10, -elo1 / 400));
     int wA = 0, wB = 0, n = 0; double llr = 0; const double up = std::log(0.95 / 0.05), lo = std::log(0.05 / 0.95);
     const double t0 = now();
@@ -68,7 +71,7 @@ int main(int argc, char** argv) {
             Game8 g; newGame8(g, gs, 0); g.sim.trackOrient = 0;
             for (int shots = 0; g.winner < 0 && shots < 150; ++shots) {
                 bool isA = (g.turn == 0) == aIs0;
-                BotCtx c; botDefaults(c, noisy, isA ? na : nb, gs * 31 + shots); c.budget = budget; c.nm = nm;
+                BotCtx c; botDefaults(c, noisy, isA ? na : nb, gs * 31 + shots); c.budget = budget; c.nm = nm; c.posSigma = isA ? judgeA : judgeB;
                 BotDecision d; botThink(c, g, d);
                 if (d.place) resetBall(g.sim.b[0], d.px, d.py);
                 executeShot(g, d.sp, noisy, nm, rng); simulate(g.sim); endShot8(g);
@@ -88,7 +91,7 @@ int main(int argc, char** argv) {
             int shots = 0;
             for (; g.winner < 0 && shots < 400; ++shots) {
                 bool isA = (g.turn == 0) == aIs0;
-                BotCtx c; botDefaults(c, noisy, 0, gs * 31 + shots); c.budget = budget; c.nm = nm; c.snk = isA ? &sa.ev : &sb.ev;
+                BotCtx c; botDefaults(c, noisy, 0, gs * 31 + shots); c.budget = budget; c.nm = nm; c.snk = isA ? &sa.ev : &sb.ev; c.posSigma = isA ? judgeA : judgeB;
                 BotDecision d; botThink(c, g, d);
                 if (d.place) resetBall(g.sim.b[0], d.px, d.py);
                 prepShot(g, d.tgt);
@@ -97,7 +100,7 @@ int main(int argc, char** argv) {
                 if (g.pendingChoice && g.winner < 0) {
                     RefInfo ri; snkReferee(pre, g, d.sp, nm, 0, 0.5, gs + shots, ri);
                     if (g.winner < 0 && g.pendingChoice) {
-                        BotCtx cc; botDefaults(cc, noisy, 0, gs * 37 + shots); cc.budget = budget; cc.nm = nm; cc.snk = ((g.turn == 0) == aIs0) ? &sa.ev : &sb.ev;
+                        BotCtx cc; botDefaults(cc, noisy, 0, gs * 37 + shots); cc.budget = budget; cc.nm = nm; cc.snk = ((g.turn == 0) == aIs0) ? &sa.ev : &sb.ev; cc.posSigma = ((g.turn == 0) == aIs0) ? judgeA : judgeB;
                         real v[3]; snkApplyChoice(g, pre, snkChooseOption(cc, g, pre, v));
                     }
                 }

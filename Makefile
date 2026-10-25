@@ -16,11 +16,12 @@ build/%: tests/%.cpp $(HDRS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-tests: build/test_physics build/snk_rules_test build/bot_test build/ev_test build/snk_escape_test
+tests: build/test_physics build/snk_rules_test build/bot_test build/ev_test build/snk_escape_test build/judge_test
 	./build/test_physics
 	./build/ev_test quick
 	./build/snk_rules_test 1.0 1 120 0
 	./build/snk_escape_test 0.35 20 600 0
+	./build/judge_test 3 60 400
 
 web:
 	./build.sh
@@ -30,7 +31,7 @@ smoke: tools
 	HOURS=0.15 SP_MIN=1.5 ARENA_MIN=1 BUDGET=80 BUILD_WEB=0 EXPORT=0 NET_EPOCHS=1 FEAT=runs/smoke/feat RUN=runs/smoke ./train/run_pipeline.sh
 
 clean:
-	rm -rf train/bin build/test_physics build/snk_rules_test build/bot_test build/ev_test
+	rm -rf train/bin build/test_physics build/snk_rules_test build/bot_test build/ev_test build/snk_escape_test build/judge_test
 
 # starting-position families (train/positions.h): validity of every family (and of the position one
 # bot shot later), incl. 'perturbed' when self-play data exists (POS_FROM). About 10 s.

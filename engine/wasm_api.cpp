@@ -39,6 +39,7 @@ static double CHOICE_VALS[3];
 static int CHOICE_BEST = 1;
 static TableVis VIS;
 static NoiseModel NM;
+static double POS_SIGMA = 0;   // human-like judgement for the bots: sd [m] of the ball positions they see per sample
 static Rng shotRng;
 static double OUT[1024];
 static double accum = 0;
@@ -120,6 +121,8 @@ EXPORT(vmax) double jsVmax() { return SIM().P.vmax; }
 EXPORT(simDt) double jsSimDt() { return SIM_DT; }
 
 EXPORT(setNoise) void setNoise(double skill) { NM.skill = skill; }
+// human-like judgement (bots with human error only): sd of the perceived ball positions in mm, 0 = off
+EXPORT(setJudgement) void setJudgement(double mm) { POS_SIGMA = mm > 0 ? mm * 0.001 : 0; }
 // Full human-error profile from OUT: lo[4], hi[4], k[4], mu[4], missProb, missMul
 EXPORT(setNoiseProfile) void setNoiseProfile() {
     for (int c = 0; c < 4; ++c) { NM.lo[c] = OUT[c]; NM.hi[c] = OUT[4 + c]; NM.k[c] = OUT[8 + c]; NM.mu[c] = OUT[12 + c]; }
@@ -175,19 +178,22 @@ EXPORT(snkEvalKind) int snkEvalKind() { return SNK_USE_TABLE ? (SNK_USE_NET ? 2 
 static BotCtx BOT;
 static u64 botSeed = 1;
 // Bot decision -> OUT: place, px, py, phi, V, a, b, value, sims, cands,
-//                      full, partial, secant, refine, switches, phase-1 sims
+//                      full, partial, secant, refine, switches, phase-1 sims, target,
+//                      pot chance (-1 not a pot)
 EXPORT(botThink) void botThink(int noisy, int useNN, double budget) {
     botDefaults(BOT, noisy != 0, (useNN && !TYPE) ? (noisy ? NN_NOISY : NN_STD) : 0, botSeed++);
     BOT.nm = NM;     // the bot plays with the same unsteady arm
     BOT.refMode = REF_MODE; BOT.refTau = REF_TAU;
     if (TYPE) BOT.snk = snkEvaluator(noisy);
     BOT.budget = budget;
+    BOT.posSigma = noisy ? POS_SIGMA : 0;
     BotDecision d;
     if (TYPE) pool::botThink(BOT, GS, d); else pool::botThink(BOT, G8, d);
     OUT[0] = d.place; OUT[1] = d.px; OUT[2] = d.py; OUT[3] = d.sp.phi; OUT[4] = d.sp.V;
     OUT[5] = d.sp.a; OUT[6] = d.sp.b; OUT[7] = d.value; OUT[8] = d.sims; OUT[9] = d.nCand;
     OUT[10] = d.nFull; OUT[11] = d.nPartial; OUT[12] = d.nSecant; OUT[13] = d.nRefine; OUT[14] = d.nSwitch; OUT[15] = d.phase1;
     OUT[16] = d.tgt;
+    OUT[17] = TYPE ? botPotChance(BOT, GS, d, 48) : botPotChance(BOT, G8, d, 48);
 }
 
 // Advance the shot in progress by frameDt seconds (event-driven: all events up to that
@@ -225,7 +231,7 @@ EXPORT(endShot) void endShot(int noisy, double budget) {
         CHOICE_BEST = CH_PLAY; CHOICE_VALS[0] = CHOICE_VALS[1] = CHOICE_VALS[2] = -1e9;
         if (GS.pendingChoice && budget > 0) {
             BotCtx c; botDefaults(c, noisy != 0, 0, botSeed++); c.nm = NM; c.budget = budget;
-            c.refMode = REF_MODE; c.refTau = REF_TAU; c.snk = snkEvaluator(noisy);
+            c.refMode = REF_MODE; c.refTau = REF_TAU; c.snk = snkEvaluator(noisy); c.posSigma = noisy ? POS_SIGMA : 0;
             CHOICE_BEST = snkChooseOption(c, GS, PRE, CHOICE_VALS);
         }
     } else endShot8(G8);
@@ -282,7 +288,7 @@ EXPORT(setFreeNom) int setFreeNom(int id) {
 // the computer's favourite target for the player to move (used to nominate a free ball)
 EXPORT(botFavourite) int botFavourite(int noisy, double budget) {
     BotCtx c; botDefaults(c, noisy != 0, 0, botSeed++); c.nm = NM; c.budget = budget;
-    c.refMode = REF_MODE; c.refTau = REF_TAU;
+    c.refMode = REF_MODE; c.refTau = REF_TAU; c.posSigma = noisy ? POS_SIGMA : 0;
     if (TYPE) c.snk = snkEvaluator(noisy);
     BotDecision d;
     if (TYPE) pool::botThink(c, GS, d); else pool::botThink(c, G8, d);

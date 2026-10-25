@@ -13,6 +13,9 @@
 //  5. Precision variant: the best few are re-evaluated under K noisy executions
 //     (same noise model the game uses) and the best mean wins -> the bot
 //     prefers robust, lower-power shots automatically.
+//  6. Human-like judgement (posSigma > 0): every noisy sample also sees the balls a few mm
+//     from where they are, so the bot cannot foresee kisses, cannons and cue-ball paths
+//     better than a player who judges the table by eye.
 #pragma once
 #include "rulesSnk.h"
 
@@ -255,6 +258,7 @@ struct BotCtx {
     real rootW;                   // per decision: win chance of the position as it stands (-1: points evaluator)
     SnkEscFam esc[6]; int nEsc;   // escape windows when snookered
     bool foulGuard;               // a deliberate foul into a miss is never preferred to a real attempt (off: the evaluator alone decides)
+    real posSigma;                // human-like judgement: sd [m] of the ball positions in each noisy sample (0 = exact)
     // statistics of the last decision
     int nFull, nPartial, nSecant, nRefine, nSwitch, nCand;
     real phase1Used;
@@ -268,6 +272,7 @@ inline void botDefaults(BotCtx& c, bool noisy, const float* nn, u64 seed) {
     c.nSpin = 3; c.spins[0] = -0.35; c.spins[1] = 0.0; c.spins[2] = 0.3;
     c.nSafe = 20;
     c.refMode = 0; c.refTau = 0.5; c.mxDirect = -1; c.mxPStar = -1; c.nEsc = 0; c.rootW = -1; c.foulGuard = true;
+    c.posSigma = 0;
 }
 inline void botLight(BotCtx& c) { c.budget = c.noisy ? 300 : 120; c.K = 5; c.nSafe = 8; }
 
@@ -770,15 +775,68 @@ struct BotDecision {
     real sims; int nFull, nPartial, nSecant, nRefine, nSwitch, nCand; real phase1;
 };
 
-template <class G> real simFull(BotCtx& c, const G& g, const Cand& cd, bool noisy, int k) {
-    G pre = g;
+// Every ball moved by a gaussian of sd sigma (at most 3 sigma), staying on the bed and clear
+// of the others (a ball that finds no legal spot in a few tries stays where it is), the same
+// kind of jitter the rack gets, only larger.
+inline void perturbBalls(Sim& s, real sigma, Rng& r) {
+    const real R = s.P.R, xm = s.T.L / 2 - R, ym = s.T.W / 2 - R, cap = 3 * sigma;
+    for (int i = 0; i < s.n; ++i) {
+        Ball& b = s.b[i];
+        if (!b.on) continue;
+        for (int tries = 0; tries < 6; ++tries) {
+            real dx = sigma * r.gauss(), dy = sigma * r.gauss(), d = psqrt(dx * dx + dy * dy);
+            if (d > cap) { dx *= cap / d; dy *= cap / d; }
+            real x = b.x + dx, y = b.y + dy;
+            if (pabs(x) > xm || pabs(y) > ym) continue;
+            bool ok = true;
+            for (int j = 0; j < s.n && ok; ++j) {
+                if (j == i || !s.b[j].on) continue;
+                real ex = s.b[j].x - x, ey = s.b[j].y - y;
+                ok = ex * ex + ey * ey >= 4 * R * R * 1.0001;
+            }
+            if (ok) { b.x = x; b.y = y; break; }
+        }
+    }
+}
+// The stroke as meant for the perturbed balls: the same impact parameter on the target
+// (same thickness, so a pot is still aimed at its pocket). Escapes off cushions are aimed at
+// the table, not at a ball, and keep their angle.
+inline void reaimPerturbed(const Sim& was, const Sim& now, int tgt, int kind, ShotParams& sp) {
+    if (tgt <= 0 || kind == 3) return;
+    real ux = pcos(sp.phi), uy = psin(sp.phi);
+    real dx = was.b[tgt].x - was.b[0].x, dy = was.b[tgt].y - was.b[0].y;
+    real bimp = ux * dy - uy * dx;
+    real ex = now.b[tgt].x - now.b[0].x, ey = now.b[tgt].y - now.b[0].y, L = psqrt(ex * ex + ey * ey);
+    real dxL = psqrt(dx * dx + dy * dy);
+    if (L < 1e-9 || dxL < 1e-9) return;
+    real q0 = pclamp(bimp / dxL, -1, 1), q1 = pclamp(bimp / L, -1, 1);
+    // phi = theta - asin(b / L); asin via atan2 keeps us inside pmath
+    real th0 = patan2(dy, dx), th1 = patan2(ey, ex);
+    real as0 = patan2(q0, psqrt(1 - q0 * q0)), as1 = patan2(q1, psqrt(1 - q1 * q1));
+    sp.phi += (th1 - as1) - (th0 - as0);
+}
+// one sampled play of a candidate: pre = position as struck (perturbed in a human-like noisy
+// sample), a = after the balls stopped (rules not applied yet)
+template <class G> void simSample(BotCtx& c, const G& g, const Cand& cd, bool noisy, int k, G& pre, G& a) {
+    pre = g;
     pre.sim.trackOrient = 0;
     if (cd.place) resetBall(pre.sim.b[0], cd.px, cd.py);
     prepShot(pre, cd.tgt);
-    G a = pre;
-    if (noisy) { Rng r; r.seed(c.crnSeed + 7919ULL * (u64)(k + 1)); executeShot(a, cd.sp, true, c.nm, r); }
-    else { strike(a.sim, cd.sp.phi, cd.sp.V, cd.sp.a, cd.sp.b); a.ballInHand = 0; }
+    ShotParams sp = cd.sp;
+    if (noisy && c.posSigma > 0) {
+        Sim was = pre.sim;
+        Rng pr; pr.seed((c.crnSeed ^ 0x9e3779b97f4a7c15ULL) + 104729ULL * (u64)(k + 1));
+        perturbBalls(pre.sim, c.posSigma, pr);
+        reaimPerturbed(was, pre.sim, cd.tgt, cd.kind, sp);
+    }
+    a = pre;
+    if (noisy) { Rng r; r.seed(c.crnSeed + 7919ULL * (u64)(k + 1)); executeShot(a, sp, true, c.nm, r); }
+    else { strike(a.sim, sp.phi, sp.V, sp.a, sp.b); a.ballInHand = 0; }
     simulate(a.sim, SIM_DT, 25);
+}
+template <class G> real simFull(BotCtx& c, const G& g, const Cand& cd, bool noisy, int k) {
+    G pre, a;
+    simSample(c, g, cd, noisy, k, pre, a);
     c.used += 1; c.nFull++;
     return valueAfter(c, pre, a, &cd.sp);
 }
@@ -1111,6 +1169,22 @@ template <class G> void botThink(BotCtx& c, const G& g0, BotDecision& d) {
     d.place = b.place; d.px = b.px; d.py = b.py; d.sp = b.sp; d.value = b.val; d.tgt = b.tgt; d.kind = b.kind; d.pk = b.pk;
     d.sims = c.used; d.nFull = c.nFull; d.nPartial = c.nPartial; d.nSecant = c.nSecant;
     d.nRefine = c.nRefine; d.nSwitch = c.nSwitch; d.nCand = L.n; d.phase1 = c.phase1Used;
+}
+
+// Chance that the chosen stroke pots its target, as the bot sees it: N fresh samples with its
+// own human error and judgement (independent of the search's samples, so not flattered by
+// having picked the luckiest candidate). -1 if the stroke is not a pot.
+template <class G> real botPotChance(BotCtx& c, const G& g, const BotDecision& d, int N) {
+    if (d.kind != 0 || d.tgt <= 0) return -1;
+    Cand cd; cd.place = d.place; cd.px = d.px; cd.py = d.py; cd.sp = d.sp; cd.tgt = d.tgt; cd.pk = d.pk; cd.kind = d.kind;
+    if (!c.noisy) N = 1;
+    int hit = 0;
+    for (int k = 0; k < N; ++k) {
+        G pre, a;
+        simSample(c, g, cd, c.noisy, 100000 + k, pre, a);
+        for (int i = 0; i < a.sim.ev.nPot; ++i) if (a.sim.ev.pot[i] == d.tgt) { hit++; break; }
+    }
+    return (real)hit / N;
 }
 
 inline bool breakShot(const Game8& g) { return g.isBreak != 0; }
