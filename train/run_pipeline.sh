@@ -8,6 +8,10 @@
 # Snooker self-play rotates over SKILLS (human-error multipliers, 0 = no error). Only the
 # frames at SKILL feed the current evaluator (tuning + arena); all of them are kept as raw
 # positions (data/snk*/ *.posrec), which train the skill-conditioned neural evaluator (NET=1).
+# Snooker frames start from a mix of position families (SP_MIX, train/positions.h: needing
+# snookers, laid snookers, free balls, safety battles, clearances, black-ball finishes, perturbed
+# real positions, ...), and the snooker arenas grade candidates on a suite of them (ARENA_SUITE),
+# with the result per family in the report.
 # Results: runs/<stamp>/REPORT.md, runs/<stamp>/progress.jsonl, runs/<stamp>/best/*, and the
 # accepted evaluators exported to train/out/*.h (compiled into the browser game by ./build.sh).
 set -u
@@ -27,6 +31,10 @@ EXPORT=${EXPORT:-1}            # 1: write the best evaluators to train/out/*.h a
 NET=${NET:-1}                  # 1: also train the neural snooker evaluator (needs python3 with torch + numpy)
 NET_EPOCHS=${NET_EPOCHS:-3}    # passes over all snooker positions per iteration
 FEAT=${FEAT:-feat}             # feature cache for the net (rebuilt from data/ when missing)
+# snooker starting positions (train/positions.h). SP_MIX="" restores the old 50% break / 50% random.
+SP_MIX=${SP_MIX-"break:4 random:1 snookers:1 lead:0.5 snookered:1 freeball:0.5 safety:1 clearance:1 black:0.5 perturbed:1"}
+ARENA_SUITE=${ARENA_SUITE-"break:4 random:1 snookers:1 lead:1 snookered:1 freeball:1 safety:1 clearance:1 black:0.5 perturbed:1"}
+POS_FROM=${POS_FROM:-data/snk}  # real positions for the 'perturbed' family (a sample of them)
 
 mkdir -p "$RUN/best" data/8std data/8noisy data/snk "$FEAT"
 if [ -n "${BEST_FROM:-}" ]; then cp "$BEST_FROM"/* "$RUN/best/"; else cp train/baseline/* "$RUN/best/"; fi
@@ -37,6 +45,8 @@ log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$RUN/pipeline.log"; }
   echo "# Training run $(basename "$RUN")"
   echo
   echo "Started $(date -u +%Y-%m-%dT%H:%MZ), budget ${HOURS} h on ${CORES} cores. Self-play ${SP_MIN} min/iteration (${GAMES}), bot budget ${BUDGET} sims/shot, TD lambda ${LAMBDA}, evaluator skill x${SKILL}, snooker self-play skills: ${SKILLS}."
+  echo
+  echo "Snooker starting positions: self-play \`${SP_MIX:-break:1 random:1 (legacy)}\`, arena suite \`${ARENA_SUITE:-break only}\`."
   echo
 } > "$RUN/REPORT.md"
 
@@ -52,17 +62,18 @@ launch_selfplay() {
     seed=$(( iter * 1000 + c ))
     sk=$SKILL
     case $g in
-      8std)   cmd=(train/bin/selfplay --game 8 --noisy 0 --weights8 "$BEST/w8_std.bin" --out data/8std) ;;
-      8noisy) cmd=(train/bin/selfplay --game 8 --noisy 1 --weights8 "$BEST/w8_noisy.bin" --out data/8noisy) ;;
+      8std)   cmd=(train/bin/selfplay --game 8 --noisy 0 --weights8 "$BEST/w8_std.bin" --out data/8std --random-start 0.5) ;;
+      8noisy) cmd=(train/bin/selfplay --game 8 --noisy 1 --weights8 "$BEST/w8_noisy.bin" --out data/8noisy --random-start 0.5) ;;
       snk)    sk=${SK[$(( (c - 1 + iter - 1) % ${#SK[@]} ))]}
               out=data/snk; nz=1
               if [ "$(python3 -c "print(1 if abs(float('$sk') - float('$SKILL')) < 1e-9 else 0)")" != "1" ]; then out=data/snk_s$sk; fi
               [ "$(python3 -c "print(1 if float('$sk') == 0 else 0)")" = "1" ] && nz=0
               mkdir -p "$out"
               cmd=(train/bin/selfplay --game snk --noisy $nz --snk-params "$BEST/snk_params.txt" --snk-table "$BEST/snk_table.bin" --out "$out")
-              [ "$(cat "$BEST/snk_use_net" 2>/dev/null)" = "1" ] && cmd+=(--snk-net "$BEST/snk_net.bin") ;;
+              [ "$(cat "$BEST/snk_use_net" 2>/dev/null)" = "1" ] && cmd+=(--snk-net "$BEST/snk_net.bin")
+              if [ -n "$SP_MIX" ]; then cmd+=(--start-mix "$SP_MIX" --pos-from "$POS_FROM"); else cmd+=(--random-start 0.5); fi ;;
     esac
-    "${cmd[@]}" --minutes "$minutes" --seed "$seed" --budget "$BUDGET" --skill "$sk" --random-start 0.5 > "$dir/selfplay_${g}_s${sk}_$c.log" 2>&1 &
+    "${cmd[@]}" --minutes "$minutes" --seed "$seed" --budget "$BUDGET" --skill "$sk" > "$dir/selfplay_${g}_s${sk}_$c.log" 2>&1 &
     pids+=($!)
   done
 }
@@ -111,12 +122,13 @@ while [ $(( $(date +%s) + need )) -lt "$deadline" ]; do
   # current best snooker evaluator (B side): net, win table + linear E, or the legacy points evaluation
   if [ "$(cat "$BEST/snk_use_table" 2>/dev/null)" = "1" ]; then bp="$BEST/snk_params.txt"; bt="$BEST/snk_table.bin"; else bp=none; bt=none; fi
   bn=none; [ "$(cat "$BEST/snk_use_net" 2>/dev/null)" = "1" ] && bn="$BEST/snk_net.bin"
+  suite=(); [ -n "$ARENA_SUITE" ] && suite=(--suite "$ARENA_SUITE" --pos-from "$POS_FROM")
   if [ -f "$IT/cand/snk_net.bin" ]; then
-    train/bin/arena --game snk --noisy 1 --skill "$SKILL" --minutes "$ARENA_MIN" --budget "$BUDGET" --seed $((iter * 7 + 4)) --a-snk-params "$BEST/snk_params.txt" --a-snk-table "$BEST/snk_table.bin" --a-snk-net "$IT/cand/snk_net.bin" --b-snk-params "$bp" --b-snk-table "$bt" --b-snk-net "$bn" > "$IT/arena_snknet.log" 2>&1 & apids+=($!)
+    train/bin/arena --game snk --noisy 1 --skill "$SKILL" --minutes "$ARENA_MIN" --budget "$BUDGET" --seed $((iter * 7 + 4)) --a-snk-params "$BEST/snk_params.txt" --a-snk-table "$BEST/snk_table.bin" --a-snk-net "$IT/cand/snk_net.bin" --b-snk-params "$bp" --b-snk-table "$bt" --b-snk-net "$bn" "${suite[@]}" > "$IT/arena_snknet.log" 2>&1 & apids+=($!)
   fi
   # once the net is in use, the linear candidate (and the table under the net) stays fixed
   if [ -f "$IT/cand/snk_params.txt" ] && [ "$bn" = "none" ]; then
-    train/bin/arena --game snk --noisy 1 --skill "$SKILL" --minutes "$ARENA_MIN" --budget "$BUDGET" --seed $((iter * 7 + 3)) --a-snk-params "$IT/cand/snk_params.txt" --a-snk-table "$IT/cand/snk_table.bin" --b-snk-params "$bp" --b-snk-table "$bt" > "$IT/arena_snk.log" 2>&1 & apids+=($!)
+    train/bin/arena --game snk --noisy 1 --skill "$SKILL" --minutes "$ARENA_MIN" --budget "$BUDGET" --seed $((iter * 7 + 3)) --a-snk-params "$IT/cand/snk_params.txt" --a-snk-table "$IT/cand/snk_table.bin" --b-snk-params "$bp" --b-snk-table "$bt" "${suite[@]}" > "$IT/arena_snk.log" 2>&1 & apids+=($!)
   fi
   # the cores the arenas leave free keep producing self-play data meanwhile
   pids=()
@@ -136,6 +148,17 @@ while [ $(( $(date +%s) + need )) -lt "$deadline" ]; do
     [ "$kind" = "snk" ] && [ "$netAccepted" = "1" ] && accept=0   # the net was trained on the old table
     tl=$(grep '^RESULT' "$IT/tune_$kind.log" 2>/dev/null | tail -1)
     echo "- **$kind**: arena $line, accepted: $accept. Tuning: ${tl:-n/a}" >> "$RUN/REPORT.md"
+    if grep -q '^FAMILY' "$f"; then   # per-family results of a snooker suite
+      grep '^FAMILY' "$f" | sed 's/^FAMILY //' | python3 -c "
+import json, sys
+print()
+print('  | family | games | A-B | score | Elo | pairs swept A / split / swept B | mover won |')
+print('  |---|---|---|---|---|---|---|')
+for l in sys.stdin:
+    d = json.loads(l)
+    print('  | %s | %d | %d-%d | %.3f | %+.0f +- %.0f | %d / %d / %d | %.0f%% |' % (d['family'], d['games'], d['a'], d['b'], d['score'], d['elo'], d['elo_ci'], d['swept_a'], d['split'], d['swept_b'], 100 * d['mover_won']))
+print()" >> "$RUN/REPORT.md"
+    fi
     echo "{\"iter\":$iter,\"kind\":\"$kind\",\"accepted\":$accept,\"arena\":$line}" >> "$RUN/progress.jsonl"
     if [ "$accept" = "1" ]; then
       case $kind in

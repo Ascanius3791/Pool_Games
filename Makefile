@@ -6,6 +6,7 @@ TOOLS := train/bin/selfplay train/bin/tune train/bin/arena train/bin/abstract_sn
 
 .PHONY: tools tests web clean smoke
 tools: $(TOOLS)
+HDRS += train/positions.h
 
 train/bin/%: train/%.cpp $(HDRS)
 	@mkdir -p train/bin
@@ -30,3 +31,10 @@ smoke: tools
 
 clean:
 	rm -rf train/bin build/test_physics build/snk_rules_test build/bot_test build/ev_test
+
+# starting-position families (train/positions.h): validity of every family (and of the position one
+# bot shot later), incl. 'perturbed' when self-play data exists (POS_FROM). About 10 s.
+.PHONY: positions-test
+POS_FROM ?= data/snk
+positions-test: build/positions_test
+	./build/positions_test --n 2000 --shots 150 $(if $(wildcard $(POS_FROM)),--pos-from $(POS_FROM))

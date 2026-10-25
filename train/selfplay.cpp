@@ -2,13 +2,21 @@
 //
 // usage: selfplay --game 8|snk --out DIR --minutes M --seed S
 //                 [--noisy 1] [--skill 1.0] [--budget 250] [--random-start 0.5]
+//                 [--start-mix "break:4 snookers:1 ..."] [--pos-from DIR[,DIR...]] [--pool 20000]
 //                 [--weights8 FILE] [--snk-params FILE] [--snk-table FILE] [--snk-net FILE]
+// Snooker starting positions: --start-mix draws every frame's start from the families in
+// train/positions.h with the given weights (it replaces --random-start, which keeps the old
+// behaviour: break-off, or randomStartSnk with that probability). The 'perturbed' family takes
+// real positions from the *.posrec files under --pos-from (a sample of --pool positions).
+// The family is stored in the frame header of the raw records (posrec version 3); only
+// frames from the break or the random family write shot statistics (.stats), so the
+// abstract simulator stays calibrated on natural play.
 // Writes DIR/<game>_<seed>.games (see common.h) and, for snooker, DIR/<game>_<seed>.stats
 // (one line per shot: kind targetClass potted foul visitStart) for calibrating the abstract
 // simulator, and DIR/snk_<seed>.posrec: the full raw positions with the frame result, for
 // training a neural evaluator later (format: SnkPosRec in common.h, documented in TRAINING.md).
 // Every finished game is flushed, so killing the process loses at most one game.
-#include "common.h"
+#include "positions.h"
 using namespace train;
 
 static int snkTargetClass(int t) { return t >= 1 && t <= 15 ? 1 : (t >= 16 ? 2 : 0); }
@@ -23,6 +31,22 @@ int main(int argc, char** argv) {
     const double skill = a.num("--skill", 1.0);
     const double budget = a.num("--budget", 250);
     const double randomStart = a.num("--random-start", 0.5);
+    FamMix mix; bool useMix = false;
+    if (a.has("--start-mix")) {
+        std::string err;
+        if (!mix.parse(a.str("--start-mix", ""), err)) { fprintf(stderr, "--start-mix: %s\n", err.c_str()); return 1; }
+        useMix = true;
+    }
+    PosPool pool;
+    if (snk && useMix && mix.w[FAM_PERTURBED] > 0) {
+        std::vector<std::string> dirs; std::string pf = a.str("--pos-from", ""), cur;
+        for (char ch : pf + ",") { if (ch == ',') { if (!cur.empty()) dirs.push_back(cur); cur.clear(); } else cur += ch; }
+        size_t n = dirs.empty() ? 0 : loadPosPool(pool, dirs, (size_t)a.num("--pool", 20000), seed);
+        if (!n) { fprintf(stderr, "note: no positions for the perturbed family (--pos-from '%s'), its weight goes to break\n", pf.c_str()); mix.w[FAM_BREAK] += mix.w[FAM_PERTURBED]; mix.w[FAM_PERTURBED] = 0; }
+        else printf("perturbed family: %zu positions from %s\n", n, pf.c_str());
+    }
+    if (snk && useMix) printf("start mix: %s\n", mix.str().c_str());
+    long famFrames[FAM_N] = {0}, famPos[FAM_N] = {0}, famMoverWon[FAM_N] = {0}, famUnfinished[FAM_N] = {0}, famFailed = 0;
     std::vector<float> w8; const float* nn = 0;
     if (a.has("--weights8") && a.str("--weights8", "none") != "none") {
         if (!loadFloats(a.str("--weights8", ""), w8, NWEIGHTS)) { fprintf(stderr, "bad --weights8\n"); return 1; }
@@ -50,7 +74,8 @@ int main(int argc, char** argv) {
     while (now() - t0 < minutes * 60) {
         GameRec rec; rec.type = snk ? 1 : 0; rec.winner = -1;
         u64 gseed = seed * 1000003ULL + games;
-        bool random = rng.uniform() < randomStart;
+        bool random = useMix ? false : rng.uniform() < randomStart;
+        int fam = random ? FAM_RANDOM : FAM_BREAK, startMover = 0;
         int shots = 0, cap = snk ? 400 : 150;
         if (!snk) {
             Game8 g; newGame8(g, gseed, 0); g.sim.trackOrient = 0;
@@ -67,7 +92,9 @@ int main(int argc, char** argv) {
             rec.winner = g.winner;
         } else {
             GameSnk g; newGameSnk(g, gseed, 0); g.sim.trackOrient = 0;
-            if (random) randomStartSnk(g, rng);
+            if (useMix) { fam = mix.sample(rng); if (!genSnkStart(g, fam, rng, &pool)) { famFailed++; fam = FAM_BREAK; } }
+            else if (random) randomStartSnk(g, rng);
+            startMover = g.turn;
             raw.clear();
             bool visitStart = true; int lastTurn = g.turn;
             while (g.winner < 0 && shots < cap) {
@@ -85,7 +112,7 @@ int main(int argc, char** argv) {
                 executeShot(g, d.sp, noisy, nm, rng); simulate(g.sim);
                 const int potsBefore = pre.score[pre.turn];
                 endShotSnk(g); shots++;
-                if (fs) {
+                if (fs && famNatural(fam)) {
                     int potted = (g.lastFoul == 0 && g.score[pre.turn] > potsBefore && d.kind == 0) ? 1 : 0;
                     fprintf(fs, "%d %d %d %d %d\n", d.kind, snkTargetClass(d.tgt), potted, g.lastFoul ? 1 : 0, visitStart ? 1 : 0);
                 }
@@ -101,19 +128,25 @@ int main(int argc, char** argv) {
             rec.winner = g.winner;
         }
         games++;
-        if (rec.winner < 0) { unfinished++; continue; }
+        if (snk) famFrames[fam]++;
+        if (rec.winner < 0) { unfinished++; if (snk) famUnfinished[fam]++; continue; }
+        if (snk) { famPos[fam] += (long)rec.pos.size(); famMoverWon[fam] += rec.winner == startMover; }
         positions += (int)rec.pos.size();
         writeGame(fg, rec);
         if (fs) fflush(fs);
-        if (fp && snk) {
-            int32_t h[4] = {0x534E4B50, 2, (int32_t)raw.size(), rec.winner};
-            float sk = noisy ? (float)skill : 0.0f; int32_t bud = (int32_t)budget;
-            fwrite(h, 4, 4, fp); fwrite(&sk, 4, 1, fp); fwrite(&bud, 4, 1, fp);
-            fwrite(raw.data(), sizeof(SnkPosRec), raw.size(), fp); fflush(fp);
-        }
+        if (fp && snk) writeRawFrame(fp, rec.winner, noisy ? (float)skill : 0.0f, (int)budget, fam, raw);
         if (games % 5 == 0) { printf("[%s seed %llu] games %d (unfinished %d) positions %d  %.1f min\n", snk ? "snk" : "8", (unsigned long long)seed, games, unfinished, positions, (now() - t0) / 60); fflush(stdout); }
     }
     printf("[%s seed %llu] done: %d games, %d positions\n", snk ? "snk" : "8", (unsigned long long)seed, games - unfinished, positions);
+    if (snk) {
+        printf("%-10s %7s %9s %8s %10s %10s\n", "family", "frames", "positions", "pos/frm", "mover won", "unfinished");
+        for (int f = 0; f < FAM_N; ++f) {
+            if (!famFrames[f]) continue;
+            long fin = famFrames[f] - famUnfinished[f];
+            printf("%-10s %7ld %9ld %8.1f %9.1f%% %10ld\n", FAM_NAMES[f], famFrames[f], famPos[f], fin ? (double)famPos[f] / fin : 0.0, fin ? 100.0 * famMoverWon[f] / fin : 0.0, famUnfinished[f]);
+        }
+        if (famFailed) printf("starts that fell back to the break: %ld\n", famFailed);
+    }
     fclose(fg); if (fs) fclose(fs); if (fp) fclose(fp);
     return 0;
 }
