@@ -261,7 +261,9 @@ body.replay #hint, body.replay #spinWrap, body.replay #powerWrap { display: none
   <label><input type="checkbox" data-el="spread" checked> Shot spread (human error)</label>
   <label><input type="checkbox" data-el="report" checked> Bot reasoning and last stroke</label>
   <label><input type="checkbox" data-el="hint" checked> Control hints</label>
-  <div class="dpNote">Hidden panels keep working: W A S D still set spin, Space still shoots. Press U to hide or show everything at once.</div>
+  <div class="dpTitle">Graphics</div>
+  <label><input type="checkbox" id="optFast"> Fast graphics (no shadows, simpler balls, lower resolution)</label>
+  <div class="dpNote">The 2D view always uses the fast setting. Hidden panels keep working: W A S D still set spin, Space still shoots. Press U to hide or show everything at once.</div>
 </div>
 
 <div id="repPanel" class="overlay" hidden>
@@ -25140,7 +25142,7 @@ async function loadEngine() {
 const S = {
   mode: "two", noisy: false, skill: 1, type: 0, builtType: -1, effort: 3000,
   phase: "menu",            // menu | aim | stroke | moving | botthink | botaim | choice | nominate | offer | over
-  paused: false, botResign: true, lowRun: [0, 0], resignOffered: false,
+  paused: false, gen: 0, botTok: 0, botResign: true, lowRun: [0, 0], resignOffered: false,
   phi: 0, power: 0.35, a: 0, b: 0,
   charging: false, chargeSrc: null, chargeT: 0,
   cam: "cue", guide: true, sound: true,
@@ -25248,14 +25250,15 @@ function ballTexture(n) {
 
 function buildScene() {
   const stage = document.getElementById("stage");
-  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(pixelRatio());
   renderer.setSize(stage.clientWidth, stage.clientHeight);
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false;
   stage.appendChild(renderer.domElement);
   scene = new THREE.Scene();
   scene.background = new THREE.Color("#0c1110");
@@ -25320,7 +25323,7 @@ function buildGame() {
   S.rods[0].position.x = -0.85 * k; S.rods[1].position.x = 0.85 * k;
   S.points[0].position.x = -0.75 * k; S.points[1].position.x = 0.75 * k;
   camS.orbDist = 2.9 * k;
-  S.builtType = S.type;
+  S.builtType = S.type; S.lite = null; applyQuality();
 }
 
 // polygon boundary of a rectangle merged with (union) or cut by (cut) circles
@@ -25474,6 +25477,7 @@ function buildBalls(envTex) {
   for (let i = 0; i < nb; i++) {
     const mat = new THREE.MeshPhysicalMaterial({ map: ballTexture(i), roughness: 0.18, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.06, envMap: envTex, envMapIntensity: 1.0 });
     const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = false;
+    m.userData.full = mat; m.userData.lite = new THREE.MeshStandardMaterial({ map: mat.map, roughness: 0.22, metalness: 0, envMap: envTex, envMapIntensity: 1.0 });
     S.tableGroup.add(m); ballMeshes.push(m);
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(r() * 6.28, r() * 6.28, r() * 6.28));
     if (i === 0) q.identity();
@@ -25621,6 +25625,24 @@ function updateBallMeshes(dt) {
   }
 }
 
+// ------------------------------------------------------------------ render quality
+// 2D view and "fast graphics": no shadow pass, no clear coat, device pixel ratio capped at 1
+const pixelRatio = () => Math.min(window.devicePixelRatio || 1, S.fast || S.cam === "2d" ? 1 : 2);
+function applyQuality() {
+  const lite = S.fast || S.cam === "2d";
+  if (renderer.getPixelRatio() !== pixelRatio()) { const st = $("stage"); renderer.setPixelRatio(pixelRatio()); renderer.setSize(st.clientWidth, st.clientHeight); }
+  if (lite === S.lite) return;
+  S.lite = lite; S.key.castShadow = !lite; S.shadowSig = null;
+  for (const m of ballMeshes) m.material = lite ? m.userData.lite : m.userData.full;
+}
+// redraw the shadow map only when a shadow caster moved
+function updateShadows() {
+  if (S.lite) return;
+  let sig = cue.visible ? Math.round(cue.position.x * 2000) + Math.round(cue.position.z * 2000) * 7 + Math.round(cue.position.y * 2000) * 13 + cue.quaternion.y * 1e4 : -1;
+  for (let i = 0; i < ballMeshes.length; i++) { const m = ballMeshes[i]; if (m.visible) sig += (i + 1) * (m.position.x * 1e4 + m.position.y * 3e4 + m.position.z * 7e4); }
+  if (sig !== S.shadowSig) { S.shadowSig = sig; renderer.shadowMap.needsUpdate = true; }
+}
+
 // ------------------------------------------------------------------ camera
 const camS = { az: 0, el: 0.2, dist: 0.95, orbAz: -Math.PI / 2, orbEl: 0.85, orbDist: 2.9, pos: new THREE.Vector3(0, 3, 2), look: new THREE.Vector3() };
 function updateCamera(dt, snap) {
@@ -25631,7 +25653,9 @@ function updateCamera(dt, snap) {
     const portrait = aspect < 1;
     const needW = (portrait ? S.W : S.L) + 0.36, needH = (portrait ? S.L : S.W) + 0.36;
     const vw = renderer.domElement.clientWidth, vh = renderer.domElement.clientHeight;
-    const ins = hudInsets(vw, vh), pad = 10;
+    const now = performance.now();
+    if (snap || !S.insT || now - S.insT > 300 || S.insWH !== vw * 1e5 + vh) { S.ins = hudInsets(vw, vh); S.insT = now; S.insWH = vw * 1e5 + vh; }
+    const ins = S.ins, pad = 10;
     let x0 = ins.L + pad, x1 = vw - ins.R - pad, y0 = ins.T + pad, y1 = vh - ins.B - pad;
     if (x1 - x0 < vw * 0.4) { x0 = 0; x1 = vw; }
     if (y1 - y0 < vh * 0.4) { y0 = 0; y1 = vh; }
@@ -25681,7 +25705,7 @@ function updateCamera(dt, snap) {
 }
 
 // ------------------------------------------------------------------ sound (synthesised)
-let AC = null;
+let AC = null, noiseBuf = null;
 function audio() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; } } return AC; }
 function click(freq, vol, decay, noise) {
   const ac = audio(); if (!ac || !S.sound || vol < 0.003) return;
@@ -25690,9 +25714,11 @@ function click(freq, vol, decay, noise) {
   g.connect(ac.destination);
   const o = ac.createOscillator(); o.type = "sine"; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 0.7, t + decay); o.connect(g); o.start(t); o.stop(t + decay);
   if (noise) {
-    const len = Math.floor(ac.sampleRate * 0.02), buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const s = ac.createBufferSource(); s.buffer = buf; const ng = ac.createGain(); ng.gain.value = noise * vol; s.connect(ng); ng.connect(ac.destination); s.start(t);
+    if (!noiseBuf) {
+      const len = Math.floor(ac.sampleRate * 0.02), d = (noiseBuf = ac.createBuffer(1, len, ac.sampleRate)).getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    }
+    const s = ac.createBufferSource(); s.buffer = noiseBuf; const ng = ac.createGain(); ng.gain.value = noise * vol; s.connect(ng); ng.connect(ac.destination); s.start(t);
   }
 }
 function playSounds() {
@@ -25953,7 +25979,10 @@ function setupInput() {
     }
     if (ev.key === "f" || ev.key === "F") S.ff = false;
   });
-  window.addEventListener("resize", () => { const st = $("stage"); renderer.setSize(st.clientWidth, st.clientHeight); });
+  window.addEventListener("resize", () => { const st = $("stage"); renderer.setPixelRatio(pixelRatio()); renderer.setSize(st.clientWidth, st.clientHeight); });
+  try { S.fast = localStorage.getItem("feltchalk.fast") === "1"; } catch (e) {}
+  $("optFast").checked = !!S.fast;
+  $("optFast").onchange = () => { S.fast = $("optFast").checked; applyQuality(); try { localStorage.setItem("feltchalk.fast", S.fast ? "1" : "0"); } catch (e) {} };
 
   $("bMenu").onclick = openMenu;
   $("bCam").onclick = cycleCam;
@@ -25964,7 +25993,7 @@ function setupInput() {
   $("bRerack").onclick = () => { E.respotAll(); readState(); for (const b of S.balls) b.wasOn = b.on; S.phase = "aim"; updateHUD(); setMsg("Fresh rack. Place the cue ball behind the head string."); };
   $("bHand").onclick = () => { if (S.phase !== "aim") return; E.placeCue(S.balls[0].x, S.balls[0].y); forceBallInHand(); };
   $("mTwo").onclick = () => startGame("two");
-  $("mResume").onclick = () => { $("menu").hidden = true; S.phase = S.resumePhase || "aim"; maybeBotTurn(); };
+  $("mResume").onclick = () => { $("menu").hidden = true; S.phase = S.resumePhase || "aim"; if (S.phase === "botthink") { S.botTok++; S.phase = "aim"; } maybeBotTurn(); };
   $("mPractice").onclick = () => startGame("practice");
   $("gPool").onclick = () => setType(0);
   $("gSnk").onclick = () => setType(1);
@@ -25983,7 +26012,7 @@ function setupInput() {
   $("optNomGuess").onchange = () => refSettingsChanged();
   loadRefSettings();
   $("bDisplay").onclick = () => { const p = $("displayPanel"); p.hidden = !p.hidden; $("bDisplay").setAttribute("aria-expanded", !p.hidden); };
-  document.querySelectorAll("#displayPanel input").forEach((cb) => { cb.onchange = applyDisplay; });
+  document.querySelectorAll("#displayPanel input[data-el]").forEach((cb) => { cb.onchange = applyDisplay; });
   loadDisplay();
 }
 function cancelCharge() {
@@ -26142,12 +26171,12 @@ function setEffort(e, from) {
 }
 function applyDisplay() {
   const st = {};
-  document.querySelectorAll("#displayPanel input").forEach((cb) => { st[cb.dataset.el] = cb.checked; document.body.classList.toggle("hide-" + cb.dataset.el, !cb.checked); });
+  document.querySelectorAll("#displayPanel input[data-el]").forEach((cb) => { st[cb.dataset.el] = cb.checked; document.body.classList.toggle("hide-" + cb.dataset.el, !cb.checked); });
   try { localStorage.setItem("feltchalk.display", JSON.stringify(st)); } catch (e) {}
 }
 function loadDisplay() {
   let st = {}; try { st = JSON.parse(localStorage.getItem("feltchalk.display") || "{}"); } catch (e) {}
-  document.querySelectorAll("#displayPanel input").forEach((cb) => { if (cb.dataset.el in st) cb.checked = !!st[cb.dataset.el]; });
+  document.querySelectorAll("#displayPanel input[data-el]").forEach((cb) => { if (cb.dataset.el in st) cb.checked = !!st[cb.dataset.el]; });
   applyDisplay();
 }
 function toggleAllHud() { document.body.classList.toggle("hide-all"); if (document.body.classList.contains("hide-all")) $("displayPanel").hidden = true; }
@@ -26256,7 +26285,7 @@ function freeBallPrompt() {
   if (S.type !== 1 || !k || !k.freeBall || isBot(S.game.turn)) return;
   if (!S.autoNom) { setMsg("Free ball! Right-click the ball you want to nominate, then shoot."); return; }
   setMsg("Free ball! The computer is picking a ball for you…");
-  setTimeout(() => {
+  later(() => {
     const budget = Math.max(40, Math.min(800, 200 / (S.msPerSim || 0.5)));
     const t = E.botFavourite(S.noisy ? 1 : 0, budget);
     if (t > 0 && E.setFreeNom(t)) {
@@ -26301,7 +26330,7 @@ function handleChoice(baseMsg) {
     E.snkChoose(o); readState();
     setMsg(`${baseMsg} ${name(chooser)} chooses: ${lc(labels[o])} (${fmtVal(val(o))}).${warn}`, "foul");
     S.phase = "aim"; updateHUD();
-    if (isBot(S.game.turn)) setTimeout(maybeBotTurn, S.mode === "watch" ? 900 : 700);
+    if (isBot(S.game.turn)) later(maybeBotTurn, S.mode === "watch" ? 900 : 700);
     else freeBallPrompt();
     return;
   }
@@ -26322,7 +26351,7 @@ function handleChoice(baseMsg) {
       S.phase = "aim";
       setMsg(`${name(chooser)} ${name(chooser) === "You" ? "choose" : "chooses"}: ${lc(labels[o])}.`);
       updateHUD();
-      if (isBot(S.game.turn)) setTimeout(maybeBotTurn, 500); else freeBallPrompt();
+      if (isBot(S.game.turn)) later(maybeBotTurn, 500); else freeBallPrompt();
     };
     box.appendChild(b);
   }
@@ -26348,24 +26377,32 @@ function hudInsets(vw, vh) {
   return { L, R: Rr, T, B };
 }
 function setCam(c) {
-  S.cam = c; document.body.classList.toggle("cam2d", c === "2d"); S.orthoInit = false; $("bCam").firstChild.textContent = "View: " + CAM_LABEL[c]; updateHint();
+  S.cam = c; document.body.classList.toggle("cam2d", c === "2d"); S.orthoInit = false; S.insT = 0; applyQuality(); $("bCam").firstChild.textContent = "View: " + CAM_LABEL[c]; updateHint();
   try { localStorage.setItem("feltchalk.view", c); } catch (e) {}
 }
 function cycleCam() { setCam(CAM_ORDER[(CAM_ORDER.indexOf(S.cam) + 1) % CAM_ORDER.length]); }
 function toggleGuide() { S.guide = !S.guide; $("bGuide").setAttribute("aria-pressed", S.guide); }
 function toggleSound() { S.sound = !S.sound; $("bSound").setAttribute("aria-pressed", S.sound); }
 function toggleHelp() { $("help").hidden = !$("help").hidden; }
+// works in every phase: whatever is in flight (stroke, rolling balls, bot) waits behind the menu and goes on with "Back"
 function openMenu() {
-  if (S.phase === "stroke" || S.phase === "moving" || S.phase === "botthink" || S.phase === "botaim" || S.phase === "nominate") return;
-  fillProfileSelects();
+  if (S.phase === "menu") return;
+  cancelCharge(); fillProfileSelects();
   S.resumePhase = S.phase === "over" ? null : S.phase;
   $("mResume").hidden = !S.resumePhase || S.resumePhase === "menu";
   S.phase = "menu"; $("menu").hidden = false;
 }
 
 // ------------------------------------------------------------------ game flow
+// timers of a game die with it: startGame / repStartFrom bump S.gen
+function later(f, ms) { const g = S.gen; return setTimeout(() => { if (g === S.gen) f(); }, ms); }
+function abortPlay() {
+  S.gen++; S.botTok++; stroke = null; frozenCue = null; S.botMove = null; S.botShot = null; S.camFrozen = null; S.storedShot = null;
+  S.charging = false; S.dragging = null; clearTimeout(S.msgT); $("choicePanel").hidden = true;
+  if (S.paused) togglePause();
+}
 function startGame(mode) {
-  repLeave();
+  repLeave(); abortPlay();
   S.mode = mode;
   S.noisy = $("optNoise").checked;
   const seed = Math.floor(Math.random() * 1e9);
@@ -26374,7 +26411,6 @@ function startGame(mode) {
   applyProfile();
   E.refSettings(S.missMode, S.tau);
   if (S.type === 1) E.setNomRequired(S.nomCol ? 1 : 0);
-  $("choicePanel").hidden = true; S.storedShot = null;
   if (S.builtType !== S.type) buildGame();
   for (const b of S.balls) { b.wasOn = b.on; }
   for (const k in potAnim) delete potAnim[k];
@@ -26382,7 +26418,6 @@ function startGame(mode) {
   S.phase = "aim";
   S.rec = mode === "practice" ? null : recNew(seed);
   S.lowRun = [0, 0]; S.resignOffered = false;
-  if (S.paused) togglePause();
   gameButtons();
   $("menu").hidden = true; $("over").hidden = true; $("report").hidden = true;
   updateHUD(); updatePowerUI(); drawSpin();
@@ -26405,12 +26440,13 @@ function vb(p, third, second) { const n = playerName(p); return n + " " + (n ===
 function speedToPower(V) { const vmin = 0.15, vmax = E.vmax(); return Math.min(1, Math.max(0, Math.pow(Math.max(0, (V - vmin) / (vmax - vmin)), 1 / 1.6))); }
 function maybeBotTurn() {
   if (S.phase !== "aim" || !isBot(S.game.turn) || S.game.winner >= 0 || S.mode === "replay") return;
-  if (S.paused) { setTimeout(maybeBotTurn, 250); return; }
+  if (S.paused) { later(maybeBotTurn, 250); return; }
   S.phase = "botthink";
   setMsg(`${playerName(S.game.turn)} is thinking…`);
   updateHint();
-  setTimeout(() => {
-    if (S.phase !== "botthink") return;
+  const tok = ++S.botTok;
+  later(() => {
+    if (S.phase !== "botthink" || tok !== S.botTok) return;
     if (S.paused) { S.phase = "aim"; maybeBotTurn(); return; }
     const t0 = performance.now();
     E.botThink(S.noisy ? 1 : 0, (S.noisy ? BOT_USE_NN.noisy : BOT_USE_NN.std) ? 1 : 0, S.effort);
@@ -26499,7 +26535,7 @@ function resignGame(p, why) {
   $("overTitle").textContent = `${vb(w, "wins", "win")} the ${S.type === 1 ? "frame" : "game"}`;
   $("overText").textContent = said;
   updateHUD();
-  setTimeout(() => { $("over").hidden = false; }, 600);
+  later(() => { $("over").hidden = false; }, 600);
 }
 
 let stroke = null;
@@ -26559,7 +26595,7 @@ function finishShot() {
     $("overTitle").textContent = vb(g.winner, "wins", "win");
     $("overText").textContent = reason;
     updateHUD();
-    setTimeout(() => { $("over").hidden = false; }, 900);
+    later(() => { $("over").hidden = false; }, 900);
     return;
   }
   S.phase = "aim";
@@ -26571,7 +26607,7 @@ function finishShot() {
   recNote((nPot ? `${nPot} down. ` : "") + msg);
   setMsg(msg, cls);
   updateHUD();
-  if (isBot(g.turn)) setTimeout(maybeBotTurn, S.mode === "watch" ? 700 : 500);
+  if (isBot(g.turn)) later(maybeBotTurn, S.mode === "watch" ? 700 : 500);
 }
 
 const SFOULS = { 1: "in-off", 2: "missed every ball", 3: "wrong ball hit first", 4: "potted a ball not on", 5: "snookered the opponent behind the free ball" };
@@ -26590,7 +26626,7 @@ function finishSnooker(shooter, nPot) {
     $("overText").textContent = (k.ref && k.ref.forfeit ? `Frame forfeited by ${name(1 - g.winner)} after three misses with a clear sight of a ball on. ` : "") + `Final score ${k.score[0]}–${k.score[1]}. High breaks: ${name(0)} ${k.high[0]}, ${name(1)} ${k.high[1]}.`;
     recNote(`${k.ref && k.ref.forfeit ? "Forfeit after three misses. " : ""}Frame over ${k.score[0]}-${k.score[1]}.`); recResult(`${name(g.winner)} wins ${k.score[0]}-${k.score[1]}`);
     updateHUD();
-    setTimeout(() => { $("over").hidden = false; }, 900);
+    later(() => { $("over").hidden = false; }, 900);
     return;
   }
   S.phase = "aim";
@@ -26602,7 +26638,7 @@ function finishSnooker(shooter, nPot) {
   if (g.foul && k.pending) { handleChoice(msg); return; }
   setMsg(msg, cls);
   updateHUD();
-  if (isBot(g.turn)) setTimeout(maybeBotTurn, S.mode === "watch" ? 700 : 500);
+  if (isBot(g.turn)) later(maybeBotTurn, S.mode === "watch" ? 700 : 500);
 }
 
 // ------------------------------------------------------------------ replays
@@ -26612,7 +26648,7 @@ function finishSnooker(shooter, nPot) {
 // i = the stroke as intended; @ = cue-ball placement; n = colour nominated; f = free ball
 // nominated; ! = the incoming player's choice after this foul (play on / put back / replace).
 // Numbers use the shortest form that reads back to the same double. Comments are ignored.
-const REP_FORMAT = 1, BUILD_ID = "d9e4add+";
+const REP_FORMAT = 1, BUILD_ID = "78e043e";
 const CH_CODE = { 1: "P", 2: "B", 4: "R" }, CH_OPT = { P: 1, B: 2, R: 4 };
 const repNum = (v) => String(+v);
 function recNew(seed) {
@@ -26779,7 +26815,7 @@ function repShotDone() {
   for (const b of S.balls) if (b.on) b.wasOn = true;
   S.phase = "aim"; S.a = 0; S.b = 0; drawSpin();
   updateHUD(); repBar();
-  if (S.rp.playing) setTimeout(() => { if (S.mode === "replay" && S.rp.playing) repStep(); }, 700);
+  if (S.rp.playing) later(() => { if (S.mode === "replay" && S.rp.playing) repStep(); }, 700);
 }
 function repTogglePlay() {
   S.rp.playing = !S.rp.playing;
@@ -26807,7 +26843,7 @@ function repBar(moving) {
 function repStartFrom(r) {
   if (S.mode !== "replay") S.preReplay = { noisy: S.noisy };
   S.mode = "replay"; S.rec = null; S.noisy = false;
-  S.rp = { r, k: 0, playing: false };
+  S.rp = { r, k: 0, playing: false }; abortPlay();
   setType(r.type);
   E.newGame(r.seed, 0, r.type); readState();
   if (S.builtType !== S.type) buildGame();
@@ -27032,9 +27068,10 @@ function frame() {
     if (on) { S.fbRing.material.color.set(k.freeBall ? "#e8c46a" : "#9cc4ea"); const b = S.balls[id]; S.fbRing.position.copy(E2T(b.x, b.y, 0.0015)); S.fbRing.material.opacity = 0.65 + 0.3 * Math.sin(performance.now() * 0.006); }
   }
   const rep = $("report");
-  if (S.cam === "2d") { const pr = $("powerWrap").getBoundingClientRect(); rep.style.top = (pr.bottom + 10) + "px"; rep.style.bottom = "auto"; }
-  else if (rep.style.top) { rep.style.top = ""; rep.style.bottom = ""; }
+  if (S.cam === "2d") { if (S.insT !== S.repT) { S.repT = S.insT; const pr = $("powerWrap").getBoundingClientRect(); rep.style.top = (pr.bottom + 10) + "px"; rep.style.bottom = "auto"; } }
+  else if (rep.style.top) { rep.style.top = ""; rep.style.bottom = ""; S.repT = null; }
   updateCamera(dt, false);
+  updateShadows();
   renderer.render(scene, activeCam());
   requestAnimationFrame(frame);
 }
