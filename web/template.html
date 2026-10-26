@@ -322,6 +322,12 @@ body.replay #hint, body.replay #spinWrap, body.replay #powerWrap { display: none
         <div class="profRow"><select id="optProfile"></select><button id="optProfileEdit">Edit profiles…</button></div>
         <div class="note" id="optSkillInfo"></div>
       </div>
+      <label class="sub"><input type="checkbox" id="optJudge"> Human-like judgement for the bots</label>
+      <div class="sl" id="judgeBox">
+        <div class="slHead"><span>Judging the table by eye</span><b id="optJudgeV">±3 mm</b></div>
+        <input type="range" id="optJudgeMm" min="1" max="8" step="0.5" value="3" aria-describedby="optJudgeInfo">
+        <div class="note" id="optJudgeInfo">A bot plays each shot in its head many times before it chooses. With this on, every one of those tries sees the balls slightly off where they really are, as if judged by eye. The pot itself is still aimed at the ball, but kisses, cannons and where the cue ball ends up become guesses, like they are for a person. The balls on the table are never moved.</div>
+      </div>
       <div class="sl">
         <div class="slHead"><span>Bot thinking</span><b id="optEffortTag">Normal</b></div>
         <input type="range" id="optEffort" min="0" max="1" step="0.01" aria-describedby="optEffortInfo">
@@ -436,7 +442,7 @@ async function loadEngine() {
 
 // ------------------------------------------------------------------ state
 const S = {
-  mode: "two", noisy: false, skill: 1, type: 0, builtType: -1, effort: 3000,
+  mode: "two", noisy: false, judge: 0, skill: 1, type: 0, builtType: -1, effort: 3000,
   phase: "menu",            // menu | aim | stroke | moving | botthink | botaim | choice | nominate | offer | over
   paused: false, gen: 0, botTok: 0, botResign: true, lowRun: [0, 0], resignOffered: false,
   phi: 0, power: 0.35, a: 0, b: 0,
@@ -1747,7 +1753,7 @@ function maybeBotTurn() {
     const t0 = performance.now();
     E.botThink(S.noisy ? 1 : 0, (S.noisy ? BOT_USE_NN.noisy : BOT_USE_NN.std) ? 1 : 0, S.effort);
     const d = { place: OUT[0], px: OUT[1], py: OUT[2], phi: OUT[3], V: OUT[4], a: OUT[5], b: OUT[6], value: OUT[7], sims: OUT[8], cands: OUT[9],
-      full: OUT[10], partial: OUT[11], secant: OUT[12], refine: OUT[13], switches: OUT[14], p1: OUT[15], tgt: OUT[16] };
+      full: OUT[10], partial: OUT[11], secant: OUT[12], refine: OUT[13], switches: OUT[14], p1: OUT[15], tgt: OUT[16], potP: OUT[17] };
     const ms = performance.now() - t0;
     if (d.sims > 5) { const m = ms / d.sims; S.msPerSim = S.msPerSim ? 0.7 * S.msPerSim + 0.3 * m : m; describeEffort(); }
     d.ms = ms;
@@ -1766,7 +1772,8 @@ function botGo(d) {
     S.a = d.a; S.b = d.b; S.power = speedToPower(d.V); drawSpin(); updatePowerUI();
     const r = $("report"); r.hidden = false;
     const est = S.type === 1 && E.snkEvalKind() === 0 ? `est. value ${d.value >= 0 ? "+" : ""}${d.value.toFixed(1)} pts` : `est. win chance ${(d.value * 100).toFixed(0)}%`;
-    r.innerHTML = `<b>${playerName(S.game.turn).toUpperCase()} · DECISION</b>${est}<br>phase 1: ${d.cands} candidates, ${Math.round(d.p1)} sims<br>phase 2: ${d.refine} refinements, ${d.switches} switches<br>${d.full} full sims · ${d.partial} root-finding probes<br>budget ${Math.round(d.sims)} / ${S.effort} · ${(ms / 1000).toFixed(2)} s`;
+    const pot = d.potP >= 0 ? `<br>pot chance ${(d.potP * 100).toFixed(0)}%${d.tgt > 0 ? ` (${S.type === 1 ? BALL_NAME(d.tgt) : d.tgt + "-ball"})` : ""}${S.noisy && S.judge > 0 ? ` · judging ±${S.judge} mm` : ""}` : "";
+    r.innerHTML = `<b>${playerName(S.game.turn).toUpperCase()} · DECISION</b>${est}${pot}<br>phase 1: ${d.cands} candidates, ${Math.round(d.p1)} sims<br>phase 2: ${d.refine} refinements, ${d.switches} switches<br>${d.full} full sims · ${d.partial} root-finding probes<br>budget ${Math.round(d.sims)} / ${S.effort} · ${(ms / 1000).toFixed(2)} s`;
     S.phase = "botaim";
     setMsg(`${playerName(S.game.turn)} is lining up the shot.${S.botFbMsg || ""}`);
 }
@@ -1950,7 +1957,7 @@ const repNum = (v) => String(+v);
 function recNew(seed) {
   const now = new Date(), pad = (v) => String(v).padStart(2, "0");
   return { game: S.type === 1 ? "snooker" : "8-ball", seed, mode: S.mode, players: [playerName(0), playerName(1)],
-    humanError: S.noisy ? S.profile.name : "off", noise: (S.noiseNums || []).slice(), effort: S.effort,
+    humanError: S.noisy ? S.profile.name : "off", noise: (S.noiseNums || []).slice(), effort: S.effort, judge: S.noisy ? S.judge : 0,
     ref: [S.missMode, S.tau], nom: S.nomCol ? 1 : 0, result: "", id: "",
     date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`, moves: [] };
 }
@@ -1981,7 +1988,7 @@ function repText(r) {
   const q = (v) => String(v).replace(/["\\\]\n]/g, "");
   const tags = [["Event", "Felt & Chalk replay"], ["Format", REP_FORMAT], ["Id", r.id || ""], ["Game", r.game], ["Date", r.date],
     ["Mode", r.mode], ["A", r.players[0]], ["B", r.players[1]], ["HumanError", r.humanError], ["Noise", r.noise.map(repNum).join(",")],
-    ["Effort", r.effort], ["Referee", `${r.ref[0]},${r.ref[1]}`], ["Nominate", r.nom], ["Seed", r.seed], ["Engine", BUILD_ID], ["Result", r.result || "*"]];
+    ["Effort", r.effort], ["Judgement", r.judge || 0], ["Referee", `${r.ref[0]},${r.ref[1]}`], ["Nominate", r.nom], ["Seed", r.seed], ["Engine", BUILD_ID], ["Result", r.result || "*"]];
   const out = tags.map(([k, v]) => `[${k} "${q(v)}"]`);
   out.push("");
   r.moves.forEach((m, i) => {
@@ -2037,7 +2044,7 @@ function repParse(text) {
   const ref = (tags.Referee || "0,0.5").split(",").map(Number);
   return { id: tags.Id || "", game, type: game === "snooker" ? 1 : 0, seed: +tags.Seed, mode: tags.Mode || "", date: tags.Date || "",
     players: [tags.A || "Player 1", tags.B || "Player 2"], humanError: tags.HumanError || "off",
-    noise: noise.length === 18 && noise.every(Number.isFinite) ? noise : null, effort: +tags.Effort || 3000,
+    noise: noise.length === 18 && noise.every(Number.isFinite) ? noise : null, effort: +tags.Effort || 3000, judge: +tags.Judgement || 0,
     ref: [ref[0] || 0, Number.isFinite(ref[1]) ? ref[1] : 0.5], nom: tags.Nominate === "0" ? 0 : 1, result: tags.Result || "*",
     engine: tags.Engine || "", moves };
 }
@@ -2278,6 +2285,16 @@ async function repSave() {
     repMsg("repSaveMsg", `Could not save (${e.code === "invalid_argument" ? "no permission to write here" : e.code || e.message}). Copy the text instead.`, true);
   } finally { btn.dataset.armed = ""; btn.textContent = "Save to library"; }
 }
+// human-like judgement: the bots' samples see the balls jittered by this sd (mm); only with human error
+function judgeChanged(noSave) {
+  const on = $("optJudge").checked, mm = +$("optJudgeMm").value;
+  S.judge = on ? mm : 0;
+  E.setJudgement(S.judge);
+  $("optJudgeV").textContent = `±${mm} mm`;
+  $("optJudge").disabled = !$("optNoise").checked;
+  $("judgeBox").hidden = !on || !$("optNoise").checked;
+  if (!noSave) try { localStorage.setItem("feltchalk.judge", JSON.stringify({ on, mm })); } catch (e) {}
+}
 function setupReplays() {
   $("bReplay").onclick = openReplays;
   $("bPause").onclick = () => togglePause();
@@ -2285,6 +2302,10 @@ function setupReplays() {
   try { const v = localStorage.getItem("feltchalk.botResign"); if (v !== null) $("optResign").checked = v === "1"; } catch (e) {}
   S.botResign = $("optResign").checked;
   $("optResign").onchange = () => { S.botResign = $("optResign").checked; try { localStorage.setItem("feltchalk.botResign", S.botResign ? "1" : "0"); } catch (e) {} };
+  try { const j = JSON.parse(localStorage.getItem("feltchalk.judge") || "null"); if (j) { $("optJudge").checked = !!j.on; $("optJudgeMm").value = j.mm; } } catch (e) {}
+  $("optJudge").onchange = $("optJudgeMm").oninput = () => judgeChanged();
+  $("optNoise").addEventListener("change", () => judgeChanged(true));
+  judgeChanged(true);
   $("mReplays").onclick = openReplays;
   $("overSave").onclick = () => { $("over").hidden = true; S.phase = "over"; openReplays(); };
   $("repClose").onclick = closeReplays;
