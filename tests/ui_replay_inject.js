@@ -44,8 +44,10 @@
       repGoto(n);
       log(`end of replay identical to the live game: ${snap() === live}`);
       repGoto(3); log(`seek to 3: ${$("rpPos").textContent}`);
+      $("rpSeatA").value = "bot"; $("rpSeatB").value = "human"; $("rpSeatB").onchange();
+      log(`setup note: ${$("rpSetup").textContent}`);
       repTakeover();
-      log(`take over: mode ${S.mode}, record keeps ${S.rec.moves.length} strokes`);
+      log(`take over: mode ${S.mode}, A ${playerName(0)} (bot ${isBot(0)}), B ${playerName(1)} (bot ${isBot(1)}), record keeps ${S.rec.moves.length} strokes, players ${S.rec.players}, phase ${S.phase}, msg "${$("msg").textContent}"`);
       log("DONE");
     } catch (e) { log("ERROR " + e.stack); }
   })();

@@ -79,9 +79,17 @@ int main(int argc, char** argv) {
     if (r.tags["Game"] != "snooker") { fprintf(stderr, "only snooker replays for now (Game \"%s\")\n", r.tags["Game"].c_str()); return 1; }
     const int at = (int)a.num("--at", 0), think = (int)a.num("--think", 0);
     const double budget = a.num("--budget", 2000);
-    NoiseModel nm; defaultNoise(nm);
-    {   double v[18];
-        if (nums(r.tags["Noise"], v, 18)) { for (int c = 0; c < 4; ++c) { nm.lo[c] = v[c]; nm.hi[c] = v[4 + c]; nm.k[c] = v[8 + c]; nm.mu[c] = v[12 + c]; } nm.missProb = v[16]; nm.missMul = v[17]; nm.skill = 1; } }
+    // player A's profile (Noise), player B's (NoiseB) if B played with another one
+    NoiseModel nmAB[2]; defaultNoise(nmAB[0]);
+    auto readNoise = [&](const char* tag, NoiseModel& nm) {
+        double v[18];
+        if (!nums(r.tags[tag], v, 18)) return false;
+        for (int c = 0; c < 4; ++c) { nm.lo[c] = v[c]; nm.hi[c] = v[4 + c]; nm.k[c] = v[8 + c]; nm.mu[c] = v[12 + c]; }
+        nm.missProb = v[16]; nm.missMul = v[17]; nm.skill = 1; return true;
+    };
+    readNoise("Noise", nmAB[0]);
+    if (!readNoise("NoiseB", nmAB[1])) nmAB[1] = nmAB[0];
+    const NoiseModel& nm = nmAB[0];
     const bool noisy = r.tags["HumanError"] != "off" && !r.tags["HumanError"].empty();
     double ref[2] = {0, 0.5}; nums(r.tags["Referee"], ref, 2);
     const int refMode = (int)ref[0];
@@ -95,12 +103,13 @@ int main(int argc, char** argv) {
            r.tags["HumanError"].c_str(), refMode ? "pro rules" : "judged by profile", r.moves.size(), r.tags["Result"].c_str());
     for (size_t n = 1; n <= r.moves.size(); ++n) {
         const Move& m = r.moves[n - 1];
+        const NoiseModel& nmP = nmAB[m.p ? 1 : 0];
         if (m.at) resetBall(g.sim.b[0], m.x, m.y);
         if (m.nom && g.phase == SNK_COLOUR_ON) g.nominated = m.nom;
         if (m.fb && g.freeBall) g.freeNom = m.fb;
         if ((int)n == at) { printf("before stroke %zu:\n", n); printPos(g); }
         if ((int)n == think) {
-            BotCtx c; botDefaults(c, noisy, 0, 4242); c.budget = budget; c.nm = nm; c.snk = &se.ev; c.refMode = refMode; c.refTau = ref[1];
+            BotCtx c; botDefaults(c, noisy, 0, 4242); c.budget = budget; c.nm = nmP; c.snk = &se.ev; c.refMode = refMode; c.refTau = ref[1];
             BotDecision d; botThink(c, g, d);
             printf("before stroke %zu:\n", n); printPos(g);
             printf("  bot (budget %.0f%s): kind %s, target %s, value %.3f, phi %.4f V %.2f a %+.2f b %+.2f%s | played: phi %.4f V %.2f a %+.2f b %+.2f\n",
@@ -111,12 +120,12 @@ int main(int argc, char** argv) {
         GameSnk pre = g;
         ShotParams sp; sp.phi = m.s[0]; sp.V = m.s[1]; sp.a = m.s[2]; sp.b = m.s[3];
         Rng rng; rng.seed(1);
-        executeShot(g, sp, false, nm, rng);
+        executeShot(g, sp, false, nmP, rng);
         simulate(g.sim);
         const int fh = g.sim.ev.firstHit, nPot = g.sim.ev.nPot; int pots[22]; for (int k = 0; k < nPot && k < 22; ++k) pots[k] = g.sim.ev.pot[k];
         endShotSnk(g);
         RefInfo ri = {};
-        if (g.pendingChoice && g.winner < 0) snkReferee(pre, g, sp, nm, refMode, ref[1], 13 * n, ri);
+        if (g.pendingChoice && g.winner < 0) snkReferee(pre, g, sp, nmP, refMode, ref[1], 13 * n, ri);
         printf("%3zu. %s  first %-6s", n, m.p ? "B" : "A", fh > 0 ? ballName(fh) : "none");
         std::string pot; for (int k = 0; k < nPot && k < 22; ++k) { pot += " "; pot += ballName(pots[k]); }
         if (!pot.empty()) printf(" potted%s", pot.c_str());
@@ -124,7 +133,7 @@ int main(int argc, char** argv) {
         else if (g.lastPts) printf("  +%d", g.lastPts);
         printf("  %d-%d", g.score[0], g.score[1]);
         if ((int)n == think && g.pendingChoice && g.winner < 0) {
-            BotCtx c; botDefaults(c, noisy, 0, 777); c.budget = budget; c.nm = nm; c.snk = &se.ev; c.refMode = refMode; c.refTau = ref[1];
+            BotCtx c; botDefaults(c, noisy, 0, 777); c.budget = budget; c.nm = nmAB[g.turn]; c.snk = &se.ev; c.refMode = refMode; c.refTau = ref[1];
             real v[3]; int best = snkChooseOption(c, g, pre, v);
             printf("\n     options for %s: play %.3f, put back %.3f, replace %s -> %s", g.turn ? "B" : "A", v[0], v[1],
                    v[2] < -1e8 ? "n/a" : std::to_string(v[2]).c_str(), best == CH_PLAY ? "play" : best == CH_PUTBACK ? "put back" : "replace");

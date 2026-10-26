@@ -196,6 +196,9 @@ body.cam2d #power { height: min(30vh, 240px); }
 #repBar { left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); transform: translateX(-50%); width: min(620px, calc(100vw - 340px)); min-width: 280px; box-sizing: border-box; background: rgba(14, 19, 17, 0.96); border: 1px solid var(--brass); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; z-index: 9; }
 #repBar .ctl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 #repBar .ctl button { padding: 6px 10px; font-family: var(--mono); font-weight: 500; }
+#repBar select { font: 600 13px var(--ui); color: var(--ivory); background: rgba(255,255,255,0.05); border: 1px solid var(--panel-line); border-radius: 6px; padding: 5px 6px; }
+#repBar select option { background: #121815; }
+#repBar .seat { font-size: 13px; color: var(--muted); display: flex; gap: 5px; align-items: center; }
 #repBar .pos { font: 12px var(--mono); color: var(--muted); margin-left: auto; white-space: nowrap; }
 #repBar input[type=range] { width: 100%; accent-color: var(--chalk); }
 #repNote { font-size: 13px; color: var(--ivory); line-height: 1.4; min-height: 1.4em; }
@@ -296,7 +299,8 @@ body.replay #hint, body.replay #spinWrap, body.replay #powerWrap { display: none
   </div>
   <input type="range" id="rpSeek" min="0" max="0" step="1" value="0" aria-label="Stroke">
   <div id="repNote"></div>
-  <div class="ctl"><button id="rpTakeover">Bots play on from here</button><button id="rpExit">Exit replay</button></div>
+  <div class="ctl"><span class="seat"><label for="rpSeatA" id="rpSeatALbl">A</label><select id="rpSeatA"><option value="bot">Bot</option><option value="human">Human</option></select></span><span class="seat"><label for="rpSeatB" id="rpSeatBLbl">B</label><select id="rpSeatB"><option value="bot">Bot</option><option value="human">Human</option></select></span><button id="rpTakeover">Play on from here</button><button id="rpExit">Exit replay</button></div>
+  <div id="rpSetup" class="repMsg"></div>
 </div>
 <div id="hint" class="hud">Drag to aim · drag the power bar down and release to shoot</div>
 <div id="report" class="hud" hidden></div>
@@ -316,11 +320,16 @@ body.replay #hint, body.replay #spinWrap, body.replay #powerWrap { display: none
     <button id="mReplays">Replays<small> · save this game, open the library, paste a replay</small></button>
     <div class="opt">
       <label><input type="checkbox" id="optNoise"> Human error</label>
-      <div class="note">Off: every shot goes exactly where you aim, with exactly the strength and spin you set. The bot is then close to flawless.<br>On: like a real player, your cue arm is never perfectly steady. Each shot drifts a little off your aim, comes out a little too hard or too soft, and the tip lands slightly off the spot you chose. The harder you hit, the bigger these slips get, so a smooth, medium-paced shot is the safe one and a slam is a gamble. The bot plays with exactly the same unsteady arm.</div>
+      <div class="note">Off: every shot goes exactly where you aim, with exactly the strength and spin you set. The bot is then close to flawless.<br>On: like a real player, your cue arm is never perfectly steady. Each shot drifts a little off your aim, comes out a little too hard or too soft, and the tip lands slightly off the spot you chose. The harder you hit, the bigger these slips get, so a smooth, medium-paced shot is the safe one and a slam is a gamble. The bots play with an unsteady arm too: by default the same one as yours, or another profile picked below.</div>
       <div class="sl">
         <div class="slHead"><label for="optProfile">Player profile</label></div>
         <div class="profRow"><select id="optProfile"></select><button id="optProfileEdit">Edit profiles…</button></div>
         <div class="note" id="optSkillInfo"></div>
+        <div class="slHead"><label for="optBotProf">Bot profile</label></div>
+        <div class="profRow"><select id="optBotProf"></select></div>
+        <div class="slHead"><label for="optBot2Prof">Second bot (Bot B in Watch bots)</label></div>
+        <div class="profRow"><select id="optBot2Prof"></select></div>
+        <div class="note">The bot you play against, and Bot A when two bots play, uses the bot profile. "Same as yours" follows your profile whenever you change it. Each player shoots with their own profile; a bot plans its shots as if both players had its own.</div>
       </div>
       <label class="sub"><input type="checkbox" id="optJudge"> Human-like judgement for the bots</label>
       <div class="sl" id="judgeBox">
@@ -335,7 +344,7 @@ body.replay #hint, body.replay #spinWrap, body.replay #powerWrap { display: none
         <div class="note" id="optEffortInfo"></div>
       </div>
       <label><input type="checkbox" id="optResign" checked> Bots concede hopeless games</label>
-      <div class="note">When a bot rates its own chance of winning below 10% on two of its shots in a row, it concedes to another bot and offers to concede to you (you may play on). Only games on this page do this: training self-play always plays to the end.</div>
+      <div class="note">When a bot rates its own chance of winning below 10% on two of its shots in a row, it offers to concede: to you if you are its opponent, otherwise to you as the spectator. You may accept, or overrule it and play on; a bot that was overruled can't resign again in that game. Between two bots the concession is accepted by itself after 10 s. Only games on this page do this: training self-play always plays to the end.</div>
     </div>
     <div class="opt" id="snkRules" hidden>
       <div class="slHead"><span>Snooker referee</span></div>
@@ -366,7 +375,7 @@ body.replay #hint, body.replay #spinWrap, body.replay #powerWrap { display: none
       <li><b>Curve</b>: how the slip grows in between. At 1 it grows evenly with power. Above 1 you stay accurate until you really hit hard. Below 1 even a medium-paced shot costs you accuracy.</li>
       <li><b>Tendency</b>: a habit that pushes every shot the same way, such as always cutting a little to the right or underhitting.</li>
     </ul>
-    <p class="peFormula">slip = gentle + (full power − gentle) · <i>s</i><sup>curve</sup>, where <i>s</i> is the cue-ball speed as a fraction of the hardest possible shot. The bot plays with the same profile you choose.</p>
+    <p class="peFormula">slip = gentle + (full power − gentle) · <i>s</i><sup>curve</sup>, where <i>s</i> is the cue-ball speed as a fraction of the hardest possible shot. The bots play with your profile unless you pick another bot profile in the menu.</p>
     <div class="peTop">
       <select id="peList" aria-label="Profile"></select>
       <button id="peNew">New</button><button id="peDup">Duplicate</button><button id="peDel">Delete</button>
@@ -398,7 +407,7 @@ body.replay #hint, body.replay #spinWrap, body.replay #powerWrap { display: none
       <kbd>Right-click</kbd><span>Abort a shot while pulling the cue back. On a ball (snooker): nominate the colour you are playing after a red, or the free ball</span>
       <kbd>G · M · N</kbd><span>Guide lines · sound · new game</span>
       <kbd>P</kbd><span>Pause: freezes the balls and the bots until you press it again</span>
-      <kbd>Resign</kbd><span>Concede the game (click twice). Against the bot it concedes for you, in two-player games for the player to move</span>
+      <kbd>Resign</kbd><span>Concede the game (click twice). Against a bot it concedes for you, in two-player games for the player to move</span>
       <kbd>F</kbd><span>Hold to fast-forward a shot</span>
       <kbd>U</kbd><span>Hide or show all panels. The Display button picks single panels</span>
       <kbd>Ball in hand</kbd><span>Drag the cue ball to place it</span>
@@ -28004,7 +28013,9 @@ async function loadEngine() {
 const S = {
   mode: "two", noisy: false, judge: 0, skill: 1, type: 0, builtType: -1, effort: 3000,
   phase: "menu",            // menu | aim | stroke | moving | botthink | botaim | choice | nominate | offer | over
-  paused: false, gen: 0, botTok: 0, botResign: true, lowRun: [0, 0], resignOffered: false,
+  paused: false, gen: 0, botTok: 0, botResign: true, lowRun: [0, 0], noResign: [false, false],
+  bots: [false, false],     // which seats the bots play
+  botProfId: "", bot2ProfId: "",   // "" = same as your profile / same as the first bot
   phi: 0, power: 0.35, a: 0, b: 0,
   charging: false, chargeSrc: null, chargeT: 0,
   cam: "cue", guide: true, sound: true,
@@ -28638,13 +28649,14 @@ function updateHUD() {
   }
   $("p1").hidden = practice;
   document.querySelector(".vs").hidden = practice;
-  $("p0").querySelector(".pname").textContent = practice ? "Practice table" : playerName(0);
-  $("p1").querySelector(".pname").textContent = playerName(1);
+  const withProf = (p) => playerName(p) + (S.noisy && S.mode !== "replay" ? ` · ${seatProfile(p).name}` : "");
+  $("p0").querySelector(".pname").textContent = practice ? "Practice table" : withProf(0);
+  $("p1").querySelector(".pname").textContent = withProf(1);
   $("p0").classList.toggle("active", practice || g.turn === 0);
   $("bRerack").hidden = !practice; $("bHand").hidden = !practice;
   if (snk) { S.kitchenLine.visible = true; S.kitchenLine.material.opacity = g.ballInHand ? 0.8 : 0.35; }
   else S.kitchenLine.visible = !!g.kitchen && !!g.ballInHand;
-  $("effortBox").hidden = !(S.mode === "bot" || S.mode === "watch");
+  $("effortBox").hidden = !((S.bots[0] || S.bots[1]) && S.mode !== "practice");
   updateHint();
 }
 function setMsg(text, cls) { const m = $("msg"); m.textContent = text; m.className = cls || ""; }
@@ -28665,9 +28677,10 @@ function updatePowerUI() {
   $("speed").innerHTML = v.toFixed(2) + "<small>m/s</small>";
   const sg = $("sigma");
   if (S.noisy) {
+    syncNoise();
     E.noiseSigmas(S.power);
     sg.hidden = false;
-    sg.innerHTML = `${S.profile ? S.profile.name : ""}<br>aim ±${(OUT[0] * 1000).toFixed(1)} mm per m<br>strength ±${(OUT[1] * 100).toFixed(1)}%<br>tip ±${(OUT[2] * S.R * 1000).toFixed(1)} / ±${(OUT[3] * S.R * 1000).toFixed(1)} mm`;
+    sg.innerHTML = `${S.mode === "replay" ? "" : seatProfile(S.game.turn).name}<br>aim ±${(OUT[0] * 1000).toFixed(1)} mm per m<br>strength ±${(OUT[1] * 100).toFixed(1)}%<br>tip ±${(OUT[2] * S.R * 1000).toFixed(1)} / ±${(OUT[3] * S.R * 1000).toFixed(1)} mm`;
   } else sg.hidden = true;
 }
 
@@ -28688,6 +28701,7 @@ function drawSpin() {
   // tip marker
   const tx = cx + S.a * r, ty = cy - S.b * r;
   if (S.noisy) {
+    syncNoise();
     E.noiseSigmas(S.power);
     spinG.fillStyle = "rgba(93,155,214,0.28)"; spinG.beginPath();
     spinG.ellipse(tx + OUT[6] * r, ty - OUT[7] * r, Math.max(3, 2 * OUT[2] * r), Math.max(3, 2 * OUT[3] * r), 0, 0, 7); spinG.fill();
@@ -28855,7 +28869,7 @@ function setupInput() {
   $("bRerack").onclick = () => { E.respotAll(); readState(); for (const b of S.balls) b.wasOn = b.on; S.phase = "aim"; updateHUD(); setMsg("Fresh rack. Place the cue ball behind the head string."); };
   $("bHand").onclick = () => { if (S.phase !== "aim") return; E.placeCue(S.balls[0].x, S.balls[0].y); forceBallInHand(); };
   $("mTwo").onclick = () => startGame("two");
-  $("mResume").onclick = () => { $("menu").hidden = true; S.phase = S.resumePhase || "aim"; if (S.phase === "botthink") { S.botTok++; S.phase = "aim"; } maybeBotTurn(); };
+  $("mResume").onclick = () => { $("menu").hidden = true; S.phase = S.resumePhase || "aim"; if (S.phase === "botthink") { S.botTok++; S.phase = "aim"; } if (S.mode === "replay") repBar(); else maybeBotTurn(); };
   $("mPractice").onclick = () => startGame("practice");
   $("gPool").onclick = () => setType(0);
   $("gSnk").onclick = () => setType(1);
@@ -28912,11 +28926,41 @@ for (const p of PRESETS) for (const c of PCH) { const q = p.ch[c.key]; q.lo = ro
 let customProfiles = [];
 function allProfiles() { return PRESETS.concat(customProfiles); }
 function findProfile(id) { return allProfiles().find((p) => p.id === id) || PRESETS[2]; }
-function saveProfiles() { try { localStorage.setItem("feltchalk.profiles", JSON.stringify(customProfiles)); localStorage.setItem("feltchalk.profileId", S.profile.id); } catch (e) {} }
+function saveProfiles() {
+  try {
+    localStorage.setItem("feltchalk.profiles", JSON.stringify(customProfiles)); localStorage.setItem("feltchalk.profileId", S.profile.id);
+    localStorage.setItem("feltchalk.botProfiles", JSON.stringify([S.botProfId, S.bot2ProfId]));
+  } catch (e) {}
+}
 function loadProfiles() {
   try { customProfiles = JSON.parse(localStorage.getItem("feltchalk.profiles") || "[]").filter((p) => p && p.ch); } catch (e) { customProfiles = []; }
   let id = "club"; try { id = localStorage.getItem("feltchalk.profileId") || "club"; } catch (e) {}
   S.profile = findProfile(id);
+  try { const b = JSON.parse(localStorage.getItem("feltchalk.botProfiles") || "[]"); S.botProfId = b[0] || ""; S.bot2ProfId = b[1] || ""; } catch (e) {}
+}
+// a bot profile that was deleted falls back to "same as"
+const botProfile = () => (S.botProfId && allProfiles().find((p) => p.id === S.botProfId)) || S.profile;
+const bot2Profile = () => (S.bot2ProfId && allProfiles().find((p) => p.id === S.bot2ProfId)) || botProfile();
+// the profile seat p shoots with: humans use yours, a lone bot the bot profile, two bots one each
+function seatProfile(p, bots = S.bots) {
+  if (!bots[p]) return S.profile;
+  return bots[0] && bots[1] && p === 1 ? bot2Profile() : botProfile();
+}
+function profileNums(P) {
+  const Rmm = S.R * 1000, n = new Array(18);
+  const conv = [(v) => v / 1000, (v) => v / 100, (v) => v / Rmm, (v) => v / Rmm];
+  const convMu = [(v) => -v / 1000, (v) => v / 100, (v) => v / Rmm, (v) => v / Rmm];   // + aim tendency = clockwise
+  PCH.forEach((c, i) => { const q = P.ch[c.key]; n[i] = conv[i](q.lo); n[4 + i] = conv[i](q.hi); n[8 + i] = q.k; n[12 + i] = convMu[i](q.mu); });
+  n[16] = (P.missP || 0) / 100; n[17] = P.missM || 3;
+  return n;
+}
+// The engine holds one human-error profile: load the one of seat p (the player to move by default)
+// before anything that shoots, plans or shows the spread. In a replay the recorded numbers are used.
+function syncNoise(p = S.game.turn) {
+  const nums = S.mode === "replay" ? ((p === 1 && S.rp.r.noiseB) || S.rp.r.noise) : profileNums(seatProfile(p));
+  if (!nums) return;
+  for (let i = 0; i < 18; i++) OUT[i] = nums[i];
+  E.setNoiseProfile();
 }
 // slip of one channel (player units) at power-bar position p in [0,1]
 function slipAt(q, p) {
@@ -28924,15 +28968,9 @@ function slipAt(q, p) {
   return q.lo + (q.hi - q.lo) * Math.pow(s, q.k);
 }
 function applyProfile() {
-  const P = S.profile, Rmm = S.R * 1000;
-  const conv = [(v) => v / 1000, (v) => v / 100, (v) => v / Rmm, (v) => v / Rmm];
-  const convMu = [(v) => -v / 1000, (v) => v / 100, (v) => v / Rmm, (v) => v / Rmm];   // + aim tendency = clockwise
-  PCH.forEach((c, i) => { const q = P.ch[c.key]; OUT[i] = conv[i](q.lo); OUT[4 + i] = conv[i](q.hi); OUT[8 + i] = q.k; OUT[12 + i] = convMu[i](q.mu); });
-  OUT[16] = (P.missP || 0) / 100; OUT[17] = P.missM || 3;
-  S.noiseNums = Array.from(OUT.subarray(0, 18));
-  E.setNoiseProfile();
+  syncNoise();
   describeProfile();
-  if (E && S.phase !== "menu") { updatePowerUI(); drawSpin(); }
+  if (E && S.phase !== "menu") { updatePowerUI(); drawSpin(); updateHUD(); }
 }
 function describeProfile() {
   const P = S.profile;
@@ -28943,11 +28981,15 @@ function describeProfile() {
   $("optSkillInfo").innerHTML = t + " Only matters with human error on.";
 }
 function fillProfileSelects() {
-  for (const id of ["optProfile", "peList"]) {
+  const same = { optBotProf: `Same as yours (${S.profile.name})`, optBot2Prof: `Same as the first bot (${botProfile().name})` };
+  for (const id of ["optProfile", "peList", "optBotProf", "optBot2Prof"]) {
     const sel = $(id); sel.innerHTML = "";
+    if (same[id]) { const o = document.createElement("option"); o.value = ""; o.textContent = same[id]; sel.appendChild(o); }
     for (const p of allProfiles()) { const o = document.createElement("option"); o.value = p.id; o.textContent = p.name + (p.builtin ? "" : " (yours)"); sel.appendChild(o); }
   }
   $("optProfile").value = S.profile.id;
+  $("optBotProf").value = S.botProfId && botProfile() !== S.profile ? S.botProfId : "";
+  $("optBot2Prof").value = S.bot2ProfId && bot2Profile() !== botProfile() ? S.bot2ProfId : "";
 }
 let peSel = null;
 function drawSlipChart(cv, q, ref) {
@@ -28990,10 +29032,12 @@ function renderEditor() {
     requestAnimationFrame(() => drawSlipChart(cv, q, ref.ch[c.key]));
   });
 }
-function profileEdited() { saveProfiles(); if (peSel === S.profile) applyProfile(); }
+function profileEdited() { saveProfiles(); applyProfile(); }
 function setupProfiles() {
   loadProfiles(); fillProfileSelects(); describeProfile();
-  $("optProfile").onchange = () => { S.profile = findProfile($("optProfile").value); saveProfiles(); applyProfile(); };
+  $("optProfile").onchange = () => { S.profile = findProfile($("optProfile").value); saveProfiles(); fillProfileSelects(); applyProfile(); };
+  $("optBotProf").onchange = () => { S.botProfId = $("optBotProf").value; saveProfiles(); fillProfileSelects(); applyProfile(); };
+  $("optBot2Prof").onchange = () => { S.bot2ProfId = $("optBot2Prof").value; saveProfiles(); fillProfileSelects(); applyProfile(); };
   $("optProfileEdit").onclick = () => { peSel = S.profile; $("profEd").hidden = false; fillProfileSelects(); renderEditor(); };
   $("peList").onchange = () => { peSel = findProfile($("peList").value); renderEditor(); };
   $("peName").oninput = () => { peSel.name = $("peName").value || "Unnamed"; saveProfiles(); fillProfileSelects(); $("peList").value = peSel.id; };
@@ -29005,8 +29049,10 @@ function setupProfiles() {
   $("peDel").onclick = () => {
     if (peSel.builtin) return;
     customProfiles = customProfiles.filter((p) => p !== peSel);
-    if (S.profile === peSel) { S.profile = PRESETS[2]; applyProfile(); }
-    peSel = PRESETS[2]; saveProfiles(); fillProfileSelects(); renderEditor();
+    if (S.profile === peSel) S.profile = PRESETS[2];
+    if (S.botProfId === peSel.id) S.botProfId = "";
+    if (S.bot2ProfId === peSel.id) S.bot2ProfId = "";
+    peSel = PRESETS[2]; saveProfiles(); fillProfileSelects(); renderEditor(); applyProfile();
   };
   $("peUse").onclick = () => { S.profile = peSel; saveProfiles(); fillProfileSelects(); applyProfile(); $("profEd").hidden = true; };
   $("peClose").onclick = () => { $("profEd").hidden = true; fillProfileSelects(); };
@@ -29128,6 +29174,7 @@ function checkColourNomination() {
   if (S.type !== 1 || !k || k.phase !== 1 || !k.nomRequired || k.nominated > 0 || S.botShot || isBot(S.game.turn) || S.mode === "practice") return true;
   S.storedShot = { phi: S.phi, power: S.power, a: S.a, b: S.b };
   if (!S.nomGuess) { showNomPanel(); return false; }
+  syncNoise();
   const nd = E.nomGuess(S.phi, S.power, S.a, S.b, 120);
   const counts = []; for (let j = 0; j < nd; j++) counts.push([OUT[1 + 2 * j], OUT[2 + 2 * j]]);
   counts.sort((x, y) => y[1] - x[1]);
@@ -29149,6 +29196,7 @@ function freeBallPrompt() {
   setMsg("Free ball! The computer is picking a ball for you…");
   later(() => {
     const budget = Math.max(40, Math.min(800, 200 / (S.msPerSim || 0.5)));
+    syncNoise();
     const t = E.botFavourite(S.noisy ? 1 : 0, budget);
     if (t > 0 && E.setFreeNom(t)) {
       readState(); S.fbBy = "computer";
@@ -29162,7 +29210,7 @@ function freeBallPrompt() {
 }
 const RAILS = ["top cushion", "baulk cushion", "left side cushion", "right side cushion"];
 function refereeText() {
-  const k = S.snk, r = k.ref, prof = S.profile ? S.profile.name : "player";
+  const k = S.snk, r = k.ref, prof = seatProfile(k.offender).name;
   if (!r.checked) return "";
   const pct = (v) => Math.round(v * 100) + "%";
   const esc = r.esc === 0 ? "straight at it" : r.esc === 1 ? `one cushion off the ${RAILS[r.r1]}` : r.esc === 2 ? `two cushions, ${RAILS[r.r1]} then ${RAILS[r.r2]}` : "";
@@ -29235,7 +29283,7 @@ function hudInsets(vw, vh) {
     else B = Math.max(B, vh - r.top);
   }
   const cls = document.body.classList;
-  if (!cls.contains("hide-report") && !cls.contains("hide-all") && (S.noisy || S.mode === "bot" || S.mode === "watch")) Rr = Math.max(Rr, 250);
+  if (!cls.contains("hide-report") && !cls.contains("hide-all") && (S.noisy || S.bots[0] || S.bots[1])) Rr = Math.max(Rr, 250);
   return { L, R: Rr, T, B };
 }
 function setCam(c) {
@@ -29265,6 +29313,7 @@ function abortPlay() {
 }
 function startGame(mode) {
   repLeave(); abortPlay();
+  setSeats(mode === "bot" ? [false, true] : mode === "watch" ? [true, true] : [false, false]);
   S.mode = mode;
   S.noisy = $("optNoise").checked;
   const seed = Math.floor(Math.random() * 1e9);
@@ -29279,7 +29328,7 @@ function startGame(mode) {
   S.phi = 0; S.a = 0; S.b = 0; S.power = S.type === 1 ? 0.45 : 0.75;
   S.phase = "aim";
   S.rec = mode === "practice" ? null : recNew(seed);
-  S.lowRun = [0, 0]; S.resignOffered = false;
+  S.lowRun = [0, 0]; S.noResign = [false, false];
   gameButtons();
   $("menu").hidden = true; $("over").hidden = true; $("report").hidden = true;
   updateHUD(); updatePowerUI(); drawSpin();
@@ -29291,12 +29340,16 @@ function startGame(mode) {
 
 // ------------------------------------------------------------------ bots
 const BOT_USE_NN = { std: true, noisy: true };
-const isBot = (p) => S.mode === "watch" || S.mode === "replay" || (S.mode === "bot" && p === 1);
+// Seats: S.bots says which players the bots are. The mode follows from it (two humans "two",
+// one of each "bot", two bots "watch"); the human may be player B after taking over a replay.
+function setSeats(bots) { S.bots = bots.slice(); S.mode = bots[0] && bots[1] ? "watch" : bots[0] || bots[1] ? "bot" : "two"; }
+const humanSeat = () => (S.bots[0] === S.bots[1] ? -1 : S.bots[0] ? 1 : 0);   // the one human against a bot, else -1
+const isBot = (p) => S.mode === "replay" || (S.mode !== "practice" && S.bots[p]);
 function playerName(p) {
   if (S.mode === "replay") return S.rp.r.players[p];
-  if (S.mode === "bot") return p === 0 ? "You" : "Bot";
-  if (S.mode === "watch") return p === 0 ? "Bot A" : "Bot B";
-  return "Player " + (p + 1);
+  if (S.mode === "practice" || !(S.bots[0] || S.bots[1])) return "Player " + (p + 1);
+  if (S.bots[0] && S.bots[1]) return p === 0 ? "Bot A" : "Bot B";
+  return S.bots[p] ? "Bot" : "You";
 }
 function vb(p, third, second) { const n = playerName(p); return n + " " + (n === "You" ? second : third); }
 function speedToPower(V) { const vmin = 0.15, vmax = E.vmax(); return Math.min(1, Math.max(0, Math.pow(Math.max(0, (V - vmin) / (vmax - vmin)), 1 / 1.6))); }
@@ -29311,13 +29364,14 @@ function maybeBotTurn() {
     if (S.phase !== "botthink" || tok !== S.botTok) return;
     if (S.paused) { S.phase = "aim"; maybeBotTurn(); return; }
     const t0 = performance.now();
+    syncNoise();
     E.botThink(S.noisy ? 1 : 0, (S.noisy ? BOT_USE_NN.noisy : BOT_USE_NN.std) ? 1 : 0, S.effort);
     const d = { place: OUT[0], px: OUT[1], py: OUT[2], phi: OUT[3], V: OUT[4], a: OUT[5], b: OUT[6], value: OUT[7], sims: OUT[8], cands: OUT[9],
       full: OUT[10], partial: OUT[11], secant: OUT[12], refine: OUT[13], switches: OUT[14], p1: OUT[15], tgt: OUT[16], potP: OUT[17] };
     const ms = performance.now() - t0;
     if (d.sims > 5) { const m = ms / d.sims; S.msPerSim = S.msPerSim ? 0.7 * S.msPerSim + 0.3 * m : m; describeEffort(); }
     d.ms = ms;
-    if (botWantsToResign(d)) { if (S.mode === "watch") resignGame(S.game.turn, `Its estimated chance of winning was ${Math.round(d.value * 100)}%.`); else offerResign(d); return; }
+    if (botWantsToResign(d)) { offerResign(d); return; }
     botGo(d);
   }, S.mode === "watch" ? 450 : 300);
 }
@@ -29340,25 +29394,43 @@ function botGo(d) {
 
 // ------------------------------------------------------------------ pause, resign
 // Bots concede when their own win estimate is below RESIGN_BELOW on two decisions in a row
-// (page games only; the native self-play and arena never resign).
-const RESIGN_BELOW = 0.10;
+// (page games only; the native self-play and arena never resign). A human may overrule that:
+// the bot then plays the game out (S.noResign).
+const RESIGN_BELOW = 0.10, RESIGN_AUTO_S = 10;
 function botWantsToResign(d) {
   const me = S.game.turn;
-  if (!S.botResign || (S.mode !== "watch" && S.mode !== "bot") || (S.type === 1 && E.snkEvalKind() === 0)) return false;
+  if (!S.botResign || S.noResign[me] || S.mode === "practice" || S.mode === "replay" || (S.type === 1 && E.snkEvalKind() === 0)) return false;
   S.lowRun[me] = d.value < RESIGN_BELOW ? S.lowRun[me] + 1 : 0;
-  return S.lowRun[me] >= 2 && !(S.mode === "bot" && S.resignOffered);
+  return S.lowRun[me] >= 2;
 }
+// to its human opponent, or between two bots to the spectator (accepted by itself after RESIGN_AUTO_S unless paused)
 function offerResign(d) {
-  const me = S.game.turn, name = playerName(me), what = S.type === 1 ? "frame" : "game";
-  S.phase = "offer"; S.resignOffered = true;
-  setMsg(`${name} offers to concede the ${what}.`);
-  $("chTitle").textContent = `${name} offers to concede`;
-  $("chRef").innerHTML = `${name} rates its chance of winning the ${what} at ${Math.round(d.value * 100)}%.<small>Accept and the ${what} is yours, or play on to finish it. It won't offer again in this ${what}.</small>`;
+  const me = S.game.turn, name = playerName(me), opp = playerName(1 - me), what = S.type === 1 ? "frame" : "game";
+  const toYou = !S.bots[1 - me], pct = Math.round(d.value * 100);
+  S.phase = "offer";
+  setMsg(toYou ? `${name} offers to concede the ${what}.` : `${name} wants to resign.`);
+  $("chTitle").textContent = toYou ? `${name} offers to concede` : `${name} wants to resign`;
+  $("chRef").innerHTML = `${name} rates its chance of winning the ${what} at ${pct}%.<small>${toYou ? `Accept and the ${what} is yours, or play on to finish it.` : `Accept and ${opp} wins, or overrule it and the bots play on.`} If it plays on, it can't resign again in this ${what}.</small>`;
   const box = $("chBtns"); box.innerHTML = "";
-  const btn = (label, note, fn) => { const b = document.createElement("button"); b.innerHTML = `<span>${label}</span><small>${note}</small>`; b.onclick = fn; box.appendChild(b); };
-  btn(`Accept: you win the ${what}`, "", () => resignGame(me, "Offered to concede, accepted."));
-  btn("Play on", `${name} takes its shot`, () => { $("choicePanel").hidden = true; S.phase = "botthink"; botGo(d); });
+  const btn = (label, note, fn) => { const b = document.createElement("button"); b.innerHTML = `<span>${label}</span><small>${note}</small>`; b.onclick = fn; box.appendChild(b); return b; };
+  const accept = () => resignGame(me, toYou ? "Offered to concede, accepted." : `Its estimated chance of winning was ${pct}%.`);
+  const acc = btn(toYou ? `Accept: you win the ${what}` : `Accept: ${opp} wins the ${what}`, "", accept);
+  btn(toYou ? "Play on" : "Overrule: play on", `${name} takes its shot and plays the ${what} out`, () => {
+    $("choicePanel").hidden = true; S.noResign[me] = true;
+    recNoteAdd(`${name} offered to concede (${pct}%); ${toYou ? "declined" : "overruled"}.`);
+    S.phase = "botthink"; botGo(d);
+  });
   $("choicePanel").hidden = false;
+  if (toYou) return;
+  let left = RESIGN_AUTO_S;
+  const tick = () => {
+    if (S.phase !== "offer" && S.phase !== "menu") return;
+    if (S.phase === "offer" && !S.paused && --left <= 0) { accept(); return; }
+    acc.querySelector("small").textContent = S.paused ? "paused" : `by itself in ${left} s`;
+    later(tick, 1000);
+  };
+  acc.querySelector("small").textContent = `by itself in ${left} s`;
+  later(tick, 1000);
 }
 function togglePause() {
   if (!S.paused && (S.phase === "menu" || S.phase === "over")) return;
@@ -29368,17 +29440,18 @@ function togglePause() {
   if (S.paused) { cancelCharge(); S.pauseMsg = [$("msg").textContent, $("msg").className]; setMsg("Paused. Press P or Resume to carry on."); }
   else if (S.pauseMsg) { setMsg(S.pauseMsg[0], S.pauseMsg[1]); S.pauseMsg = null; }
 }
+const anyHuman = () => S.mode !== "replay" && S.mode !== "practice" && !(S.bots[0] && S.bots[1]);
 function gameButtons() {
-  $("bResign").hidden = S.mode !== "two" && S.mode !== "bot";
+  $("bResign").hidden = !anyHuman();
   resignDisarm();
 }
 function resignDisarm() { const b = $("bResign"); b.dataset.armed = ""; b.textContent = "Resign"; }
 const RESIGN_PHASES = ["aim", "botthink", "botaim", "choice", "nominate", "offer"];
 function resignClick() {
-  if ((S.mode !== "two" && S.mode !== "bot") || S.game.winner >= 0 || !RESIGN_PHASES.includes(S.phase)) return;
-  const b = $("bResign"), p = S.mode === "bot" ? 0 : S.game.turn;
+  if (!anyHuman() || S.game.winner >= 0 || !RESIGN_PHASES.includes(S.phase)) return;
+  const b = $("bResign"), h = humanSeat(), p = h >= 0 ? h : S.game.turn;
   if (!b.dataset.armed) {
-    b.dataset.armed = "1"; b.textContent = S.mode === "bot" ? "Click again to resign" : `${playerName(p)}: click again to resign`;
+    b.dataset.armed = "1"; b.textContent = h >= 0 ? "Click again to resign" : `${playerName(p)}: click again to resign`;
     clearTimeout(S.resignT); S.resignT = setTimeout(resignDisarm, 3000);
     return;
   }
@@ -29415,6 +29488,7 @@ function startStroke() {
   stroke = { t: 0, pull, dur: 0.07 + 0.16 * (1 - S.power), follow: 0, shot: false };
 }
 function fireShot() {
+  syncNoise();
   const intended = { phi: S.phi, V: E.powerToSpeed(S.power), a: S.a, b: S.b };
   const rm = recBeforeShot();
   if (S.botShot) { const d = S.botShot; intended.V = d.V; intended.a = d.a; intended.b = d.b; if (rm && d.value !== undefined) rm.est = d.value; E.shootV(d.phi, d.V, d.a, d.b, S.noisy ? 1 : 0); S.botShot = null; S.lastShooterBot = true; }
@@ -29437,6 +29511,7 @@ const FOULS = { 1: "scratch", 2: "no ball hit", 3: "wrong ball hit first", 4: "n
 function finishShot() {
   if (S.mode === "replay") { repShotDone(); return; }
   const prevGroup = S.game.group.slice(), shooter = S.game.turn;
+  syncNoise(shooter);       // the referee judges the shooter's profile
   E.endShot(S.noisy ? 1 : 0, S.effort);
   const nPot = OUT[1];
   readState();
@@ -29510,14 +29585,17 @@ function finishSnooker(shooter, nPot) {
 // s = the stroke as executed (after human error and miscues), so replaying it is exact;
 // i = the stroke as intended; @ = cue-ball placement; n = colour nominated; f = free ball
 // nominated; ! = the incoming player's choice after this foul (play on / put back / replace).
+// HumanError/Noise are player A's profile; HumanErrorB/NoiseB appear when B played with another one.
 // Numbers use the shortest form that reads back to the same double. Comments are ignored.
-const REP_FORMAT = 1, BUILD_ID = "7369d6e+";
+const REP_FORMAT = 1, BUILD_ID = "8eff080";
 const CH_CODE = { 1: "P", 2: "B", 4: "R" }, CH_OPT = { P: 1, B: 2, R: 4 };
 const repNum = (v) => String(+v);
 function recNew(seed) {
   const now = new Date(), pad = (v) => String(v).padStart(2, "0");
+  const pa = seatProfile(0), pb = seatProfile(1), diff = S.noisy && pa !== pb;
   return { game: S.type === 1 ? "snooker" : "8-ball", seed, mode: S.mode, players: [playerName(0), playerName(1)],
-    humanError: S.noisy ? S.profile.name : "off", noise: (S.noiseNums || []).slice(), effort: S.effort, judge: S.noisy ? S.judge : 0,
+    humanError: S.noisy ? pa.name : "off", noise: profileNums(pa), effort: S.effort, judge: S.noisy ? S.judge : 0,
+    humanErrorB: diff ? pb.name : "", noiseB: diff ? profileNums(pb) : null,
     ref: [S.missMode, S.tau], nom: S.nomCol ? 1 : 0, result: "", id: "",
     date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`, moves: [] };
 }
@@ -29548,6 +29626,7 @@ function repText(r) {
   const q = (v) => String(v).replace(/["\\\]\n]/g, "");
   const tags = [["Event", "Felt & Chalk replay"], ["Format", REP_FORMAT], ["Id", r.id || ""], ["Game", r.game], ["Date", r.date],
     ["Mode", r.mode], ["A", r.players[0]], ["B", r.players[1]], ["HumanError", r.humanError], ["Noise", r.noise.map(repNum).join(",")],
+    ...(r.noiseB ? [["HumanErrorB", r.humanErrorB], ["NoiseB", r.noiseB.map(repNum).join(",")]] : []),
     ["Effort", r.effort], ["Judgement", r.judge || 0], ["Referee", `${r.ref[0]},${r.ref[1]}`], ["Nominate", r.nom], ["Seed", r.seed], ["Engine", BUILD_ID], ["Result", r.result || "*"]];
   const out = tags.map(([k, v]) => `[${k} "${q(v)}"]`);
   out.push("");
@@ -29600,12 +29679,13 @@ function repParse(text) {
   const game = (tags.Game || "").toLowerCase();
   if (game !== "snooker" && game !== "8-ball") throw new Error('missing [Game "snooker"] or [Game "8-ball"]');
   if (!tags.Seed || !Number.isFinite(+tags.Seed)) throw new Error("missing [Seed]");
-  const noise = (tags.Noise || "").split(",").map(Number);
+  const noise = (tags.Noise || "").split(",").map(Number), noiseB = (tags.NoiseB || "").split(",").map(Number);
   const ref = (tags.Referee || "0,0.5").split(",").map(Number);
   return { id: tags.Id || "", game, type: game === "snooker" ? 1 : 0, seed: +tags.Seed, mode: tags.Mode || "", date: tags.Date || "",
     players: [tags.A || "Player 1", tags.B || "Player 2"], humanError: tags.HumanError || "off",
     noise: noise.length === 18 && noise.every(Number.isFinite) ? noise : null, effort: +tags.Effort || 3000, judge: +tags.Judgement || 0,
     ref: [ref[0] || 0, Number.isFinite(ref[1]) ? ref[1] : 0.5], nom: tags.Nominate === "0" ? 0 : 1, result: tags.Result || "*",
+    noiseB: noiseB.length === 18 && noiseB.every(Number.isFinite) ? noiseB : null, humanErrorB: tags.HumanErrorB || "",
     engine: tags.Engine || "", moves };
 }
 
@@ -29623,12 +29703,13 @@ function repKey(k) {
 function repReset() {
   const r = S.rp.r;
   E.newGame(r.seed, 0, r.type);
-  if (r.noise) { for (let i = 0; i < 18; i++) OUT[i] = r.noise[i]; E.setNoiseProfile(); }
+  syncNoise(0);
   E.refSettings(r.ref[0], r.ref[1]);
   if (r.type === 1) E.setNomRequired(r.nom);
   S.rp.k = 0;
 }
 function repApply(m, animate) {
+  syncNoise(m.p);           // each stroke with its player's profile (the referee uses it)
   if (m.at) E.placeCue(m.at[0], m.at[1]);
   if (m.nom) E.setNominated(m.nom);
   if (m.fb) E.setFreeNom(m.fb);
@@ -29691,11 +29772,13 @@ function repBar(moving) {
   $("rpSeek").max = n; $("rpSeek").value = k;
   $("rpPlay").textContent = S.rp.playing ? "❚❚ Pause" : "▶ Play";
   const busy = S.phase !== "aim";
-  for (const id of ["rpStart", "rpBack", "rpNext", "rpEnd", "rpTakeover"]) $(id).disabled = busy;
+  for (const id of ["rpStart", "rpBack", "rpNext", "rpEnd"]) $(id).disabled = busy;
   $("rpSeek").disabled = busy;
+  $("rpTakeover").disabled = busy || S.game.winner >= 0;
+  repSetupNote();
   const last = k > 0 ? r.moves[k - 1] : null, next = k < n ? r.moves[k] : null;
   const who = (m) => r.players[m.p];
-  let html = k === 0 ? `<b>Start.</b> ${r.game === "snooker" ? "Snooker" : "8-ball"}, ${r.players[0]} v ${r.players[1]}${r.humanError !== "off" ? `, human error: ${r.humanError}` : ""}.` :
+  let html = k === 0 ? `<b>Start.</b> ${r.game === "snooker" ? "Snooker" : "8-ball"}, ${r.players[0]} v ${r.players[1]}${r.humanError !== "off" ? `, human error: ${r.humanError}${r.humanErrorB ? " / " + r.humanErrorB : ""}` : ""}.` :
     `<b>${k}. ${who(last)}</b>: ${last.c || ""}${last.ch ? ` Choice: ${{ 1: "play on", 2: "put back", 4: "replace the balls" }[last.ch]}.` : ""}`;
   if (moving) html = `<b>${k + 1}. ${who(next)}</b> plays…`;
   else if (next) html += ` <small>next: ${k + 1}. ${who(next)}</small>`;
@@ -29712,6 +29795,7 @@ function repStartFrom(r) {
   if (S.builtType !== S.type) buildGame();
   $("menu").hidden = true; $("over").hidden = true; $("report").hidden = true; $("choicePanel").hidden = true; $("repPanel").hidden = true;
   document.body.classList.add("replay"); $("repBar").hidden = false;
+  $("rpSeatALbl").textContent = r.players[0]; $("rpSeatBLbl").textContent = r.players[1];
   gameButtons();
   repGoto(0);
   updateCamera(0, true);
@@ -29723,21 +29807,33 @@ function repLeave() {
   if (S.preReplay) S.noisy = S.preReplay.noisy;
   applyProfile(); E.refSettings(S.missMode, S.tau);
 }
-// bots continue the game from the current replay position (a new record that keeps the strokes so far)
+// Playing on from a replay position is like setting up a game from a chess FEN: the position,
+// the player to move and the game's rules (referee, nomination) come from the replay; who plays
+// each side is picked in the bar, everything else (human error, profiles, bot thinking) from the menu.
+const seatsPicked = () => [$("rpSeatA").value === "bot", $("rpSeatB").value === "bot"];
+function repSetupNote() {
+  const bots = seatsPicked();
+  const who = (p) => `${bots[p] ? "bot" : "human"}${$("optNoise").checked ? ", " + seatProfile(p, bots).name : ""}`;
+  const t = `Play on: A ${who(0)}, B ${who(1)} · human error ${$("optNoise").checked ? "on" : "off"}${bots[0] || bots[1] ? `, bot thinking ${effortTag(S.effort).toLowerCase()}` : ""}. Change these in the menu (N), then come back to the replay.`;
+  $("rpSetup").textContent = t;
+}
 function repTakeover() {
   const r = S.rp.r;
-  if (S.phase !== "aim") return;
+  if (S.phase !== "aim" || S.game.winner >= 0) return;
   const k = S.rp.k;
   S.rp.playing = false;
   document.body.classList.remove("replay"); $("repBar").hidden = true;
-  S.mode = "watch";
-  S.lowRun = [0, 0]; S.resignOffered = false; gameButtons();
-  S.noisy = r.humanError !== "off";
-  S.rec = { ...r, mode: "watch", players: ["Bot A", "Bot B"], effort: S.effort, result: "", id: "", moves: r.moves.slice(0, k).map((m) => ({ ...m })),
-    date: recNew(r.seed).date, noise: r.noise || (S.noiseNums || []).slice() };
+  setSeats(seatsPicked());
+  S.lowRun = [0, 0]; S.noResign = [false, false]; gameButtons();
+  S.noisy = $("optNoise").checked;
+  applyProfile();
+  S.rec = { ...recNew(r.seed), ref: r.ref, nom: r.nom, moves: r.moves.slice(0, k).map((m) => ({ ...m })) };
+  S.a = 0; S.b = 0; drawSpin(); updatePowerUI();
   updateHUD();
-  setMsg(`Bots play on from stroke ${k}.`);
-  maybeBotTurn();
+  const t = S.game.turn;
+  if (isBot(t)) { setMsg(`Play on from stroke ${k}.`); maybeBotTurn(); return; }
+  setMsg(`Play on from stroke ${k}: ${playerName(t) === "You" ? "your shot" : playerName(t) + " to play"}.`);
+  if (S.type === 1 && S.snk.freeBall) freeBallPrompt();
 }
 
 // ---- library: the artifact's shared database when this page runs on claude.ai, else this browser
@@ -29887,6 +29983,7 @@ function setupReplays() {
   $("rpPlay").onclick = repTogglePlay;
   $("rpSeek").oninput = () => { if (S.phase === "aim") repGoto(+$("rpSeek").value); };
   $("rpTakeover").onclick = repTakeover;
+  $("rpSeatA").onchange = $("rpSeatB").onchange = repSetupNote;
   $("rpExit").onclick = () => { repLeave(); S.mode = "two"; S.phase = "over"; openMenu(); };
   if (window.claude && window.claude.use) window.claude.use("db").then((db) => { repDb = db || null; }).catch(() => {});
 }

@@ -14,5 +14,5 @@ open(f'build/ui_{t}.html', 'w').write(h)
 PY
 mkdir -p "${CHROME_PROFILE:-/tmp/fc-chrome}"
 CHROME="${CHROME:-/mnt/c/Program Files/Google/Chrome/Application/chrome.exe}"
-"$CHROME" --headless=new --user-data-dir="$(wslpath -w "${CHROME_PROFILE:-/tmp/fc-chrome}")" --no-first-run --enable-unsafe-swiftshader --use-angle=swiftshader --window-size=1280,800 --virtual-time-budget=60000 \
+"$CHROME" --headless=new --user-data-dir="$(wslpath -w "${CHROME_PROFILE:-/tmp/fc-chrome}")" --no-first-run --enable-unsafe-swiftshader --use-angle=swiftshader --window-size=1280,800 --virtual-time-budget=${VTB:-120000} \
   --dump-dom "file:$(wslpath -w build/ui_$T.html | sed 's#\\#/#g')" 2>/dev/null | python3 -c "import sys,re,html; m=re.search(r'<pre id=\"tlog\"[^>]*>(.*?)</pre>', sys.stdin.read(), re.S); print(html.unescape(m.group(1)) if m else 'no log')"

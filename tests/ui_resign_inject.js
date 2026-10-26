@@ -29,10 +29,31 @@
       togglePause();
       log(`resumed: bot to move ${await until(() => S.rec.moves.length >= 1)}, msg "${$("msg").textContent}"`);
 
-      // bots concede to each other on their second low estimate in a row
+      // between two bots the spectator is asked: overrule the first, the second is accepted by itself after 10 s
       lowFor = 2; startGame("watch");
+      await until(() => S.phase === "offer", 2000);
+      const first = S.game.turn;
+      log(`watch offer: "${$("chTitle").textContent}" / buttons: ${[...$("chBtns").children].map((b) => b.textContent).join(" | ")}`);
+      [...$("chBtns").children].find((b) => b.textContent.startsWith("Overrule")).click();
+      log(`overruled: phase ${S.phase}, noResign ${S.noResign}`);
+      await until(() => S.phase === "offer", 2000);
+      log(`second offer from ${S.game.turn === first ? "THE SAME BOT" : "the other bot"}: "${$("chTitle").textContent}"`);
       await until(() => S.phase === "over", 2000);
       log(`watch: phase ${S.phase}, strokes ${S.rec.moves.length}, result "${S.rec.result}", over "${$("overTitle").textContent}: ${$("overText").textContent}"`);
+      log(`note of the overrule kept: ${S.rec.moves.some((m) => /overruled/.test(m.c || ""))}`);
+
+      // two bots, two profiles; the record carries both
+      lowFor = -1; $("optNoise").checked = true; $("optBotProf").value = "pro"; $("optBotProf").onchange(); $("optBot2Prof").value = "beginner"; $("optBot2Prof").onchange();
+      startGame("watch"); togglePause();
+      const sig = (p) => { syncNoise(p); E.noiseSigmas(0.5); return OUT[0]; };
+      log(`profiles: A ${seatProfile(0).name} (aim sd ${sig(0).toFixed(5)}), B ${seatProfile(1).name} (aim sd ${sig(1).toFixed(5)}), names "${$("p0").querySelector(".pname").textContent}" / "${$("p1").querySelector(".pname").textContent}"`);
+      const rp = repParse(repText({ ...S.rec, moves: [{ p: 0, s: [0, 1, 0, 0] }] }));
+      log(`record: HumanError ${rp.humanError}, HumanErrorB ${rp.humanErrorB}, NoiseB ${rp.noiseB ? "yes" : "no"}`);
+      togglePause();
+      startGame("bot"); log(`versus bot: you ${seatProfile(0).name}, bot ${seatProfile(1).name}`);
+      $("optBotProf").value = ""; $("optBotProf").onchange(); $("optBot2Prof").value = ""; $("optBot2Prof").onchange();
+      log(`same as yours: bot ${seatProfile(1).name}, select "${$("optBotProf").selectedOptions[0].textContent}"`);
+      $("optNoise").checked = false;
 
       // versus the bot: it offers once, you play on, then you resign yourself
       lowFor = 1; startGame("bot");
